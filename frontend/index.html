@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RoutePlanner</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="" crossorigin=""/>
+    <style>
+      /* Make the app fill the window */
+      html,
+      body,
+      #app {
+        height: 100%;
+        margin: 0;
+      }
+    
+      /* Force a visible map area regardless of parent layout quirks */
+      #map {
+        height: 90vh;
+      }
+    
+      /* Keep controls on top */
+      .controls {
+        position: absolute;
+        z-index: 1000;
+        background: rgba(255, 255, 255, 0.9);
+        padding: 8px;
+        border-radius: 6px;
+        top: 8px;
+        left: 8px;
+        max-width: 420px;
+      }
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,31 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - osrm
+    environment:
+      - OSRM_URL=http://osrm:5000
+    volumes:
+      - ./backend:/app
+      - ./backend/osrm-data:/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  osrm:
+    image: osrm/osrm-backend
+    command: osrm-routed --algorithm mld /data/sweden-latest.osrm
+    volumes:
+      - ./backend/osrm-data:/data
+    ports:
+      - "5000:5000"
