@@ -16,3 +16,7 @@ backend/osrm-data/
 # Docker
 *.log
 *.db
+
+#zip files
+*.zip
+
