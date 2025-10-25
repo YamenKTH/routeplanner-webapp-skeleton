@@ -42,7 +42,9 @@ import { ref, onMounted, watch } from "vue"
 import axios from "axios"
 import L from "leaflet"
 
-const api = axios.create({ baseURL: "http://localhost:8000" })
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || '/api'
+});
 
 // ---------- reactive state ----------
 const timeMin = ref(60)

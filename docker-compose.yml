@@ -1,6 +1,5 @@
 version: "3.8"
 
-
 services:
   backend:
     build:
@@ -12,6 +11,8 @@ services:
       - osrm
     environment:
       - OSRM_URL=http://osrm:5000
+    networks:
+      - app-network
     volumes:
       - ./backend:/app
       - ./backend/osrm-data:/data
@@ -24,11 +25,23 @@ services:
       - "8080:80"
     depends_on:
       - backend
+    networks:
+      - app-network
+    # Optional: if your Vue app uses env vars, pass backend base URL
+    environment:
+      - VITE_BACKEND_URL=http://backend:8000
 
   osrm:
     image: osrm/osrm-backend
     command: osrm-routed --algorithm mld /data/sweden-latest.osrm
-    volumes:
-      - ./backend/osrm-data:/data
     ports:
       - "5000:5000"
+    volumes:
+      - ./backend/osrm-data:/data
+    networks:
+      - app-network
+
+# Shared network so containers see each other by name
+networks:
+  app-network:
+    driver: bridge
