@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 # Reuse your existing pieces
 #from app_explore import OpenTripMapClient, Place, haversine_m  # keep files in same folder
-from app_explore5 import Place, haversine_m, load_cached_area
+from app_explore import Place, haversine_m, load_cached_area
 from Scorer import Scorer
 
 
@@ -315,8 +315,16 @@ def simple_greedy_solver(
 ) -> Tour:
     # Route indices are into the coords[] that M indexes.
     route: List[int] = [0]
+    
     if end_index is not None:
-        route.append(end_index)
+        #Fixed end: must reach that endpoint
+        route = [0, end_index]
+    elif roundtrip:
+        #Roundtrip:  must return to start
+        route = [0, 0]
+    else:
+        #Open tour: no fixed endpoint  
+        route = [0]
 
     # Candidate indices
     all_candidates = list(range(site_idx_offset, site_idx_offset + len(sites)))
@@ -335,22 +343,27 @@ def simple_greedy_solver(
             t += M[current_route[i]][current_route[i+1]]
         return t
 
+    travel_time = route_time(route)
+    dwell_count =  0
+
     while candidate_indices:
         best_gain = 0.0
         best_insert = None
-        current_t = route_time(route)
+        #current_t = route_time(route)
+        current_t = travel_time
 
         for c in list(candidate_indices): 
             best_for_c = None
-            for pos in range(len(route) - 1 if end_index is not None else len(route)):
+            for pos in range(len(route) - 1 if (end_index is not None or roundtrip) else len(route)): #for each legal insertion point
                 a = route[pos]
-                b = route[pos + 1] if (end_index is not None and pos + 1 < len(route)) else None
-
-                base_added = (M[a][c] + (M[c][b] if b is not None else 0)) - (M[a][b] if b is not None else 0)
-                if base_added >= 10**9:
+                #b = route[pos + 1] if (end_index is not None and pos + 1 < len(route)) else None
+                b = route[pos + 1] if (pos + 1 < len(route)) else None             
+                #base_added = M[a][c] + M[c][b] - M[a][b]
+                base_added = M[a][c] + (M[c][b] if b is not None else 0) - (M[a][b] if b is not None else 0)
+                if base_added >= 10**9: #skip if unreasonably large
                     continue
 
-                # ---- Backtrack penalty (near U-turn at 'a') ----
+                # ---- Backtrack penalty (near U-turn at 'a') -------
                 extra_s = 0.0
                 if coords is not None and pos > 0:
                     u = route[pos - 1]
@@ -361,7 +374,7 @@ def simple_greedy_solver(
                         dist_m = M[a][c] * walk_speed_mps
                         extra_s += backtrack_penalty_per_m * dist_m
 
-                # ---- Edge reuse penalty (discourage using same hop again) ----
+                # ---- Edge reuse penalty (discourage using same hop again) ---------------------
                 hop_ac = (min(a, c), max(a, c))
                 if hop_ac in used_hops:
                     extra_s += edge_reuse_penalty_s
@@ -373,18 +386,19 @@ def simple_greedy_solver(
                 added_eff = base_added + int(round(extra_s))
 
                 # total with dwell counted per *visited* stop
-                new_total = current_t + added_eff + dwell_time_s * (len(route) - 1)
+                #new_total = current_t + added_eff + dwell_time_s * (len(route) - 1)
+                new_total = current_t + added_eff + dwell_time_s * (dwell_count + 1)
                 if new_total > budget_s:
-                    continue
+                    continue                #If exceeds time budget, we skip this insertion!
 
                 score = sites[c - site_idx_offset].base_score
                 gain = score / max(1, added_eff + dwell_time_s)
 
-                if (best_for_c is None) or (gain > best_for_c[2]):
+                if (best_for_c is None) or (gain > best_for_c[2]):  #Keep the insertion point that is best for candidate c!
                     best_for_c = (pos, added_eff, gain)
 
-            if best_for_c:
-                pos, added_eff, gain = best_for_c
+            if best_for_c:                       
+                pos, added_eff, gain = best_for_c       #Keep global best among all c:s!
                 if gain > best_gain:
                     best_gain = gain
                     best_insert = (c, pos, added_eff)
@@ -395,8 +409,9 @@ def simple_greedy_solver(
         c, pos, added_eff = best_insert
         # Insert and record the hops we just created
         a = route[pos]
-        if end_index is not None:
-            b = route[pos + 1] if (pos + 1 < len(route)) else None
+        
+        if pos + 1 < len(route):
+            b = route[pos + 1]
             route.insert(pos + 1, c)
         else:
             b = None
@@ -407,24 +422,31 @@ def simple_greedy_solver(
             used_hops.add((min(c, b), max(c, b)))
 
         candidate_indices.remove(c)
-    
 
+        travel_time += added_eff
+        dwell_count += 1
+    
+    travel_budget = max(0, budget_s - dwell_time_s * dwell_count)
     # smooth route order afterwards addition:
     route_sm = route[:]
     route_sm = two_opt_smooth(
-        route_sm, M, coords, budget_s,
+        route_sm, M, coords, travel_budget,
         angle_thresh_deg=120.0, per_deg_penalty_s=0.6,
         lambda_turn=1.0, max_passes=2
     )
     route_sm = or_opt_1_smooth(
-        route_sm, M, coords, budget_s,
+        route_sm, M, coords, travel_budget,
         angle_thresh_deg=120.0, per_deg_penalty_s=0.6,
         lambda_turn=1.0
     )
     route = route_sm
 
     legs = [M[route[i]][route[i+1]] for i in range(len(route) - 1)]
-    total_time = sum(legs)
+
+    #total_time = sum(legs)
+    travel_time = sum(legs)
+    total_time = travel_time + dwell_time_s * dwell_count
+
     visited_site_ids: List[str] = []
     contributions: Dict[str, float] = {}
     for idx in route:
@@ -558,7 +580,7 @@ def render_map(
 
     # Draw path: snapped per leg if OSRM base URL provided (unchanged)
     total_dist_m = 0.0
-    total_dur_s = 0.0
+    total_dur_s = 0.0                           #could set this to total time from the Tour if we want to later!
     if snap_base_url and len(stops) >= 2:
         for i in range(len(stops) - 1):
             a = stops[i]
@@ -693,8 +715,8 @@ def build_sites(places: List[Place]) -> List[Site]:
                 base_score=score,
                 members=[(p.xid, 1.0)],
                 #new:
-                kinds=(getattr(p, "kinds", []) or []),   # <-- pass tags through
-                raw_rate=getattr(p, "raw_rate", None),   # <-- pass OTM rate through
+                kinds=(getattr(p, "kinds", []) or []),   # pass tags through
+                raw_rate=getattr(p, "raw_rate", None),   # pass OTM rate through
             )
         )
     print(len(sites))

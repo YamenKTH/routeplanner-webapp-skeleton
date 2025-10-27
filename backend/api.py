@@ -19,8 +19,8 @@ def _import_or_none(name: str):
         return None
 
 Scorer_mod      = _import_or_none("Scorer")
-app_explore_mod = _import_or_none("app_explore5")
-app_tour_mod    = _import_or_none("app_tour3")
+app_explore_mod = _import_or_none("app_explore")
+app_tour_mod    = _import_or_none("app_tour")
 clean_db_mod    = _import_or_none("cleanDatabase")
 
 HAS_REAL_STACK = all([Scorer_mod, app_explore_mod, app_tour_mod, clean_db_mod])

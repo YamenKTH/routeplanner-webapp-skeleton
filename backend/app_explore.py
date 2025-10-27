@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable
 from urllib.parse import quote, urlparse, unquote
 import unicodedata, re
+
 import requests
 
 #Scorer! 

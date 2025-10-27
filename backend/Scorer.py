@@ -1,20 +1,37 @@
 import json
-
+from typing import Iterable, Dict, Set
 #perhaps send in a user later? 
 
 class Scorer:
     # single source of truth for defaults
     DEFAULT_CAT_WEIGHTS = {             #here we can change the defaults!
+        #promoting: 
         "gardens_and_parks": 2,
         "natural": 1.25,
         "view_points": 1.2,
         "historic": 1.2,
         "museums": 1.1,
         "architecture": 1.05,
-        "urban_environment": 0.3,
+        "cultural": 1.1,
+        
+        #neutral (optional)
+        "urban_environment": 1,
+
+        #punishing: 
         "theatres_and_entertainments": 0.2,
-        "cinemas": 0.1,
-        "railway_stations": 0.3,
+        "industrial_facilities": 0.3,
+        "foods": 0.3,
+
+
+    }
+
+    # maps Parent → children
+    CATEGORY_GROUPS: Dict[str, Set[str]] = {
+        "foods": {"restaurants", "bakeries"},
+        "theatres_and_entertainments": {"cinemas"},   #punished same way as cinemas now!
+        "historic": {"historic_architecture"},
+        "industrial_facilities": {"railway_stations"}
+        #add more groups!
     }
 
     def __init__(self, args=None, *, cat_weights=None):
@@ -57,34 +74,33 @@ class Scorer:
 
         self.cat_weights = w
 
+        self.child_to_parent: Dict[str, str] = {}
+        for parent, children in self.CATEGORY_GROUPS.items():
+            for child in children:
+                self.child_to_parent[child] = parent
+
+    def get_concatinated_kinds(self, kinds) -> Set[str]:
+        """ Only one of each parent category!
+        """
+        kindSet: Set[str] = set()
+        for k in kinds:
+            parent  = self.child_to_parent.get(k)
+            if parent and parent in self.cat_weights:
+                kind = parent
+            else:
+                kind = k
+            kindSet.add(kind)
+        return kindSet
+
     # --- scoring logic (tour-like: views × category weight) ---
     def _cat_weight(self, kinds):
-        aliases = {
-            "theatres": "theatres_and_entertainments",
-            "parks": "gardens_and_parks",
-            "park": "gardens_and_parks",
-            "viewpoint": "view_points",
-            "viewpoints": "view_points",
-        }
-        best = 1.0
-        for k in (kinds or []):
-            k = str(k).strip()
-            if k in self.cat_weights:
-                best = self.cat_weights[k]
-            elif "." in k:
-                tail = k.split(".")[-1]
-                if tail in self.cat_weights:
-                    best = self.cat_weights[tail]
-            if k in aliases and aliases[k] in self.cat_weights:
-                best = self.cat_weights[aliases[k]]
-        return float(best)
+        multiplier = 1.0
+        for k in self.get_concatinated_kinds(kinds):
+            w = self.cat_weights.get(k)
+            if w is not None:
+                multiplier *= float(w)
+        return float(multiplier)
 
     def score_place(self, place, wiki_entry=None) -> float:
         views = int((wiki_entry or {}).get("views_365", 0))
         return views * self._cat_weight(getattr(place, "kinds", []) or [])
-
-    """ def attach_scores(self, pois, wiki_views):
-        for p in pois:
-            wv = wiki_views.get(p.xid, {})
-            wiki_views[p.xid] = {**wv, "score_rank": self.score_place(p, wv)}
-        return wiki_views """

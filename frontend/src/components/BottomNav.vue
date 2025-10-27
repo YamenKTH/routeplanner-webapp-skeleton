@@ -1,66 +1,104 @@
 <template>
-  <nav class="bottom-nav">
-    <router-link to="/app-demo/map" class="nav-btn" active-class="active">
-      🗺️ <span>Map</span>
+  <nav class="bottom-nav" role="navigation" aria-label="Primary">
+    <router-link to="/app-demo/map" class="nav-btn" active-class="active" aria-label="Map">
+      <img :src="mapIcon" alt="Map" class="nav-icon" />
     </router-link>
-    <router-link to="/app-demo/explore" class="nav-btn" active-class="active">
-      🔎 <span>Explore</span>
+
+    <router-link to="/app-demo/explore" class="nav-btn" active-class="active" aria-label="Explore">
+      <img :src="exploreIcon" alt="Explore" class="nav-icon" />
     </router-link>
-    <router-link to="/app-demo/profile" class="nav-btn" active-class="active">
-      👤 <span>Profile</span>
+
+    <router-link to="/app-demo/profile" class="nav-btn" active-class="active" aria-label="Profile">
+      <img :src="profileIcon" alt="Profile" class="nav-icon" />
     </router-link>
   </nav>
 </template>
 
+<script setup>
+const mapIcon = new URL('/src/icons/mapIcon.png', import.meta.url).href
+const exploreIcon = new URL('/src/icons/exploreIcon.png', import.meta.url).href
+const profileIcon = new URL('/src/icons/profileIcon.png', import.meta.url).href
+</script>
+
+
+
 <style scoped>
-.bottom-nav {
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  background: #ffffff;
-  border-top: 1px solid #ddd;
-  padding: 0.6rem 0.3rem;
-  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.05);
-  z-index: 1000;
+:root{
+  /* Set this to your phone viewport width */
+  --app-max-w: 420px;    /* 360–430px typical */
+  --bottom-nav-h: 52px;  /* keep in sync with MapView padding-bottom */
 }
 
-/* Each button */
-.nav-btn {
-  flex: 1;
-  text-align: center;
-  padding: 0.6rem 0.3rem;
-  font-size: 1.2rem;
-  color: #555;
-  border-radius: 10px;
-  transition: all 0.25s ease;
+.nav-icon {
+  width: 33px;
+  height: 33px;
+  object-fit: contain;
+  filter: brightness(0.9);
+  transition: filter 0.2s ease;
+}
+
+.active .nav-icon {
+  filter: brightness(1.2);
+}
+
+
+.active{
+  background: linear-gradient(135deg, #6a5cff 0%, #ff3db3 100%);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(216, 131, 131, 0.35);
+}
+</style>
+
+<style scoped>
+:root{
+  /* Set this to your phone viewport width */
+  --app-max-w: 420px;    /* 360–430px typical */
+  --bottom-nav-h: 52px;  /* keep in sync with MapView padding-bottom */
+}
+
+/* Centered, constrained, below everything (z < sheet) */
+.bottom-nav{
+  position: flex;
+  bottom: 0;
+  width: 100%;
+  height: 7%;
+
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  place-items: center;
+  opacity: 0.85;
+
+  background: rgba(36, 35, 36, 0.664);
+  backdrop-filter: blur(10px) saturate(115%);
+  -webkit-backdrop-filter: blur(10px) saturate(115%);
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.25);
+
+
+
+  z-index:1003; /* your bottom sheet is ~1002, so this sits under it */
+}
+
+.nav-btn:not(:last-child) {
+  border-right: 2px solid rgb(255, 255, 255);
+}
+
+.nav-btn{
+  width: 100%;
+  height: 100%;
   display: flex;
-  flex-direction: column;
-  align-items: center;
   justify-content: center;
+  align-items: center;
+  font-size: 1.4rem;
+  color: rgba(255,255,255,0.75);
+  transition: all 0.2s ease-in-out;
+}
+.nav-btn:hover{
+  transform: translateY(-1px);
+  background: rgba(86, 92, 95, 0.911);
 }
 
-/* Text under icon */
-.nav-btn span {
-  font-size: 0.8rem;
-  margin-top: 2px;
-}
-
-/* Hover effect */
-.nav-btn:hover {
-  background: rgba(0, 123, 255, 0.1);
-  color: #007bff;
-  transform: translateY(-2px);
-}
-
-/* Active (clicked / current route) */
-.active {
-  background: #007bff;
-  color: white;
-  box-shadow: 0 3px 8px rgba(0, 123, 255, 0.3);
-}
-
-/* Active text color */
-.active span {
-  color: white;
+.active{
+  background: linear-gradient(135deg, #958fd1 0%, #f854b6 100%);
+  color: #fff;
 }
 </style>
