@@ -309,6 +309,7 @@ function toggleMode() {
   if (isRoutePlanningMode.value && confirmedRoute.value) {
     // When switching back to planning mode, keep the route displayed but allow modifications
     displayRoute(confirmedRoute.value);
+    selectedEndStart.value = false;
   } else if (confirmedRoute.value) {
     // When switching to navigation mode, focus on current POI
     zoomToCurrentPoi();
@@ -404,7 +405,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
       const kinds = (props?.kinds || []).slice(0, 4).join(", ");
       const rawRate = props?.raw_rate ?? "";
       const d = props?.distance_m ?? props?.d ?? "";
-      const det = props?.det || props?.details || {};
+      const det = props?.det || {};
       const wv = props?.wv || props?.wiki || null;
 
       let wikiExtract = det?.wikipedia_extracts?.text || "";
@@ -462,7 +463,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
     const kinds = (props?.kinds || []).slice(0, 4).join(", ");
     const rawRate = props?.raw_rate ?? "";
     const d = props?.distance_m ?? props?.d ?? "";
-    const det = props?.det || props?.details || {};
+    const det = props?.det || {};
     const wv = props?.wv || props?.wiki || null;
 
     let wikiExtract = det?.wikipedia_extracts?.text || "";
@@ -477,7 +478,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
       const views = (wv.views_365 ?? 0).toLocaleString();
       wikiLine = `📖 ${views} views • <a target="_blank" href="${wpUrl}" style="color: #6a5cff; text-decoration: none;">Open article</a>`;
     }
-
+    
     return `
       <div style="min-width: 220px; max-width: 260px; padding: 10px;">
         <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;">${name}</div>
@@ -501,6 +502,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
         </div>
       </div>
     `;
+    
   } catch {
     const name = props?.name || "Place";
     const kinds = (props?.kinds || []).slice(0, 4).join(", ");
@@ -656,7 +658,6 @@ function confirmRoute() {
   confirmedRoute.value = generatedRoutes.value[currentRouteIndex.value];
   currentPoiIndex.value = 0;
   isRoutePlanningMode.value = false;
-  selectedEndStart.value = false; // Reset this state
   updateRoutePoiMarkers();
   zoomToCurrentPoi();
   sheetState.value = "mid";
