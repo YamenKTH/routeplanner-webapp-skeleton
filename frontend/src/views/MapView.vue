@@ -404,7 +404,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
       const kinds = (props?.kinds || []).slice(0, 4).join(", ");
       const rawRate = props?.raw_rate ?? "";
       const d = props?.distance_m ?? props?.d ?? "";
-      const det = props?.det || {};
+      const det = props?.det || props?.details || {};
       const wv = props?.wv || props?.wiki || null;
 
       let wikiExtract = det?.wikipedia_extracts?.text || "";
@@ -462,7 +462,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
     const kinds = (props?.kinds || []).slice(0, 4).join(", ");
     const rawRate = props?.raw_rate ?? "";
     const d = props?.distance_m ?? props?.d ?? "";
-    const det = props?.det || {};
+    const det = props?.det || props?.details || {};
     const wv = props?.wv || props?.wiki || null;
 
     let wikiExtract = det?.wikipedia_extracts?.text || "";
