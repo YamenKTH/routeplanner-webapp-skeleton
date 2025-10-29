@@ -31,6 +31,12 @@
           
           <div class="current-poi-card">
             <h4>{{ currentPoiName }}</h4>
+            <div class="poi-details">
+              <div class="poi-info" v-if="currentPoiDetails">
+                <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
+                <div class="poi-description">{{ currentPoiDetails.description }}</div>
+              </div>
+            </div>
             <div class="poi-navigation">
               <button class="nav-btn" @click="prevPoi" :disabled="currentPoiIndex === 0">⬅️ Previous</button>
               <span class="poi-counter">{{ currentPoiIndex + 1 }} / {{ confirmedRoute.stops.length }}</span>
@@ -39,21 +45,72 @@
           </div>
         </div>
 
-        <!-- REGULAR VIEW (when in route planning mode) -->
-        <div v-else-if="isRoutePlanningMode">
-          <h3 class="panel-title">Plan Your Route</h3>
-          <h4 class="panel-title-small">Click anywhere on the map to choose your destination</h4>
-
-
-          <!-- Route selection for generated routes -->
-          <div v-if="generatedRoutes.length > 0" class="route-selection">
+        <!-- ROUTE SELECTION VIEW (after generating routes, before confirmation) -->
+        <div v-else-if="selectedEndStart && isRoutePlanningMode" class="route-selection-view">
+          <h3 class="panel-title">Select Your Route</h3>
+          
+          <!-- Route navigation -->
+          <div class="route-selection">
             <div class="route-nav">
-              <button class="route-nav-btn" @click="prevRoute" :disabled="currentRouteIndex === 0">⬅️</button>
+              <button class="route-nav-btn" @click="prevRoute" :disabled="currentRouteIndex === 0 || isSwitchingRoute">
+                <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span>
+                <span v-else>⬅️</span>
+              </button>
               <span class="route-counter">Route {{ currentRouteIndex + 1 }} / {{ generatedRoutes.length }}</span>
-              <button class="route-nav-btn" @click="nextRoute" :disabled="currentRouteIndex === generatedRoutes.length - 1">➡️</button>
+              <button class="route-nav-btn" @click="nextRoute" :disabled="currentRouteIndex === generatedRoutes.length - 1 || isSwitchingRoute">
+                <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span>
+                <span v-else>➡️</span>
+              </button>
             </div>
             <button class="confirm-route-btn" @click="confirmRoute">Confirm This Route</button>
           </div>
+
+          <!-- Route information -->
+          <div class="route-info-card">
+            <div class="route-stats-large">
+              <div class="stat-item">
+                <span class="stat-icon">📍</span>
+                <div class="stat-content">
+                  <div class="stat-value">{{ currentRoute.stops.length }} stops</div>
+                  <div class="stat-label">Points of Interest</div>
+                </div>
+              </div>
+              <div class="stat-item">
+                <span class="stat-icon">📏</span>
+                <div class="stat-content">
+                  <div class="stat-value">{{ currentRoute.distance }} km</div>
+                  <div class="stat-label">Total Distance</div>
+                </div>
+              </div>
+              <div class="stat-item">
+                <span class="stat-icon">🕒</span>
+                <div class="stat-content">
+                  <div class="stat-value">{{ currentRoute.time }}</div>
+                  <div class="stat-label">Estimated Time</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- POI List -->
+          <div class="poi-list-container">
+            <h4 class="poi-list-title">Points of Interest</h4>
+            <div class="poi-list">
+              <div v-for="(stop, index) in currentRoute.stops" :key="index" 
+                   class="poi-list-item" :class="{ 'current-poi': index === 0 }">
+                <div class="poi-number">{{ index + 1 }}</div>
+                <div class="poi-content">
+                  <div class="poi-name">{{ stop.name || `Stop ${index + 1}` }}</div>
+                  <div class="poi-categories" v-if="stop.categories">{{ stop.categories.join(', ') }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- INITIAL PLANNING VIEW (before generating routes) -->
+        <div v-else-if="isRoutePlanningMode && !selectedEndStart">
+          <h3 class="panel-title">Plan Your Route</h3>
 
           <!-- MAIN CONTROLS -->
           <div class="dense-grid">
@@ -81,47 +138,10 @@
               </label>
             </div>
 
-            <!-- Start Position Display 
-            <div class="position-display cardish compact">
-              <div class="position-header">
-                <span class="icon">📍</span>
-                <span class="position-title">Start Position</span>
-              </div>
-              <div class="current-coordinates">
-                {{ lat.toFixed(5) }}, {{ lon.toFixed(5) }}
-              </div>
-            </div>
-          -->
-            <!-- End Position Selection 
-            <div v-if="tripMode === 'end'" class="end-position-controls">
-              <div class="cardish compact">
-                <div class="end-position-header">
-                  <span class="icon">🎯</span>
-                  <span class="end-position-title">Select End Position</span>
-                </div>
-                
-                <div v-if="!endPositionSelected" class="end-position-options">
-                  <div class="option-description">Click anywhere on the map or choose from a POI popup</div>
-                  <div class="selection-hint">End position not selected yet</div>
-                </div>
-                
-                <div v-else class="end-position-selected">
-                  <div class="selected-coordinates">
-                    <strong>End Position Set</strong>
-                    <div class="coord-display-small">{{ endLat.toFixed(5) }}, {{ endLon.toFixed(5) }}</div>
-                  </div>
-                  <button class="change-end-btn" @click="clearEndPosition">Change</button>
-                </div>
-              </div>
-            </div>
--->         
             <!-- Advanced toggle in mid state -->
             <button v-if="sheetState==='mid'" class="adv-toggle" @click="sheetState='expanded'">
               Advanced settings
             </button>
-
-            
-
           </div>
 
           <!-- ADVANCED -->
@@ -147,11 +167,10 @@
           </transition>
           
           <!-- Generate -->
-            <button class="generate-btn" @click="generateRoute" :disabled="isGenerating || !canGenerate">
-              <span class="btn-icon" :class="{ spinning: isGenerating }">▶️</span>
-              {{ isGenerating ? "Building..." : "Generate Route" }}
-            </button>
-
+          <button class="generate-btn" @click="generateRoute" :disabled="isGenerating || !canGenerate">
+            <span class="btn-icon" :class="{ spinning: isGenerating }">▶️</span>
+            {{ isGenerating ? "Building..." : "Generate Route" }}
+          </button>
         </div>
       </div>
     </div>
@@ -178,6 +197,7 @@ const lat = ref(59.3293);
 const lon = ref(18.0686);
 const tripMode = ref("round");
 const isGenerating = ref(false);
+const isSwitchingRoute = ref(false);
 
 // Route management
 const generatedRoutes = ref([]);
@@ -185,6 +205,7 @@ const currentRouteIndex = ref(0);
 const confirmedRoute = ref(null);
 const currentPoiIndex = ref(0);
 const isRoutePlanningMode = ref(true);
+const selectedEndStart = ref(false); // New state to track if we're selecting between routes
 
 // End position management
 const endPositionSelected = ref(false);
@@ -200,6 +221,31 @@ window._stopMarkers = [];
 // Track route POIs to avoid duplicates
 let routePoiMarkers = [];
 
+/* ---------------- computed properties ---------------- */
+const canGenerate = computed(() => {
+  if (tripMode.value === "round") return true;
+  return endPositionSelected.value && !!endLat.value && !!endLon.value;
+});
+
+const currentRoute = computed(() => {
+  return generatedRoutes.value[currentRouteIndex.value] || {};
+});
+
+const currentPoiName = computed(() => {
+  if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return "";
+  const stop = confirmedRoute.value.stops[currentPoiIndex.value];
+  return stop.name || `Stop ${currentPoiIndex.value + 1}`;
+});
+
+const currentPoiDetails = computed(() => {
+  if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return null;
+  const stop = confirmedRoute.value.stops[currentPoiIndex.value];
+  return {
+    categories: stop.categories ? stop.categories.join(', ') : 'No categories',
+    description: stop.description || 'No description available'
+  };
+});
+
 /* ---------------- bottom sheet ---------------- */
 const STATES = ["peek", "mid", "expanded"];
 const STATE_POS = { peek: 88, mid: 1, expanded: 0 };
@@ -209,20 +255,9 @@ const STEP_TRIGGER_PX = 28;
 const dragging = ref(false);
 let dragStartY = 0, lastY = 0, dragStartTranslate = STATE_POS[sheetState.value], dragTranslate = STATE_POS[sheetState.value];
 
-const canGenerate = computed(() => {
-  if (tripMode.value === "round") return true;
-  return endPositionSelected.value && !!endLat.value && !!endLon.value;
-});
-
 const sheetStyle = computed(() => ({
   transform: `translateY(${dragging.value ? dragTranslate : STATE_POS[sheetState.value]}%)`,
 }));
-
-const currentPoiName = computed(() => {
-  if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return "";
-  const stop = confirmedRoute.value.stops[currentPoiIndex.value];
-  return stop.name || `Stop ${currentPoiIndex.value + 1}`;
-});
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function getY(evt) {
@@ -350,8 +385,58 @@ const routePoiIcon = L.icon({
 /* ---------------- popup builder ---------------- */
 function buildPoiPopup(props, isCoordinatePopup = false) {
   try {
+    // Don't show set as start/end buttons when in route selection mode
+    if (selectedEndStart.value) {
+      if (isCoordinatePopup) {
+        // Simple coordinate display without buttons
+        return `
+          <div style="min-width: 180px; padding: 8px;">
+            <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📍 Coordinates</div>
+            <div style="background: #f8f9fa; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 12px; border: 1px solid #e9ecef;">
+              ${props.lat.toFixed(5)}, ${props.lon.toFixed(5)}
+            </div>
+          </div>
+        `;
+      }
+
+      // Regular POI popup without set as start/end buttons
+      const name = props?.name || "Unnamed";
+      const kinds = (props?.kinds || []).slice(0, 4).join(", ");
+      const rawRate = props?.raw_rate ?? "";
+      const d = props?.distance_m ?? props?.d ?? "";
+      const det = props?.det || {};
+      const wv = props?.wv || props?.wiki || null;
+
+      let wikiExtract = det?.wikipedia_extracts?.text || "";
+      if (wikiExtract && wikiExtract.length > 120) wikiExtract = wikiExtract.slice(0, 120) + "…";
+
+      const xid = props?.xid;
+      const otm = det?.otm || det?.url || (xid ? `https://opentripmap.com/en/card?xid=${encodeURIComponent(xid)}` : "#");
+
+      let wikiLine = "";
+      if (wv?.project && wv?.title) {
+        const wpUrl = `https://${wv.project}/wiki/${wv.title}`;
+        const views = (wv.views_365 ?? 0).toLocaleString();
+        wikiLine = `📖 ${views} views • <a target="_blank" href="${wpUrl}" style="color: #6a5cff; text-decoration: none;">Open article</a>`;
+      }
+
+      return `
+        <div style="min-width: 220px; max-width: 260px; padding: 10px;">
+          <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;">${name}</div>
+          <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+            ${rawRate ? `⭐ ${rawRate} • ` : ''}${d ? `${d}m • ` : ''}<span style="font-size: 11px;">${kinds}</span>
+          </div>
+          ${wikiExtract ? `<div style="font-size: 12px; margin: 8px 0; line-height: 1.3;">${wikiExtract}</div>` : ''}
+          ${wikiLine ? `<div style="font-size: 11px; margin-bottom: 8px;">${wikiLine}</div>` : ''}
+          <div style="margin-bottom: 8px;">
+            <a target="_blank" href="${otm}" style="font-size: 12px; color: #6a5cff; text-decoration: none;">📌 OpenTripMap</a>
+          </div>
+        </div>
+      `;
+    }
+
+    // Original popup with set as start/end buttons (when not in route selection mode)
     if (isCoordinatePopup) {
-      // Compact popup for random coordinate clicks
       return `
         <div style="min-width: 180px; padding: 8px;">
           <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📍 Coordinates</div>
@@ -372,7 +457,7 @@ function buildPoiPopup(props, isCoordinatePopup = false) {
       `;
     }
 
-    // Regular POI popup - made more compact
+    // Regular POI popup with set as start/end buttons
     const name = props?.name || "Unnamed";
     const kinds = (props?.kinds || []).slice(0, 4).join(", ");
     const rawRate = props?.raw_rate ?? "";
@@ -439,8 +524,6 @@ window.setAsEndFromPopup = (lat, lon) => {
 
 function setAsStart(lat, lon) {
   // Update the start position
-  lat = lat;
-  lon = lon;
   origin.setLatLng([lat, lon]);
   circle.setLatLng([lat, lon]);
   
@@ -490,7 +573,12 @@ function clearEndPosition() {
 function onMapClick(e) {
   const { lat: clat, lng: clng } = e.latlng;
   
-  // Show compact coordinate popup for both modes
+  // Don't show coordinate popup when in route selection mode
+  if (selectedEndStart.value) {
+    return;
+  }
+  
+  // Show compact coordinate popup for both modes when not in route selection
   const popupContent = buildPoiPopup({ lat: clat, lon: clng }, true);
   L.popup()
     .setLatLng(e.latlng)
@@ -534,17 +622,33 @@ async function loadPois() {
 }
 
 /* ---------------- Route Management ---------------- */
-function prevRoute() {
-  if (currentRouteIndex.value > 0) {
-    currentRouteIndex.value--;
-    displayRoute(generatedRoutes.value[currentRouteIndex.value]);
+async function prevRoute() {
+  if (currentRouteIndex.value > 0 && !isSwitchingRoute.value) {
+    isSwitchingRoute.value = true;
+    
+    // Simulate API call with loading
+    setTimeout(async () => {
+      currentRouteIndex.value--;
+      // For now, just use the existing generated route data
+      // Later, you can replace this with actual API call to get different route
+      await buildTour(); // This will regenerate routes with current parameters
+      isSwitchingRoute.value = false;
+    }, 800);
   }
 }
 
-function nextRoute() {
-  if (currentRouteIndex.value < generatedRoutes.value.length - 1) {
-    currentRouteIndex.value++;
-    displayRoute(generatedRoutes.value[currentRouteIndex.value]);
+async function nextRoute() {
+  if (currentRouteIndex.value < generatedRoutes.value.length - 1 && !isSwitchingRoute.value) {
+    isSwitchingRoute.value = true;
+    
+    // Simulate API call with loading
+    setTimeout(async () => {
+      currentRouteIndex.value++;
+      // For now, just use the existing generated route data
+      // Later, you can replace this with actual API call to get different route
+      await buildTour(); // This will regenerate routes with current parameters
+      isSwitchingRoute.value = false;
+    }, 800);
   }
 }
 
@@ -552,6 +656,7 @@ function confirmRoute() {
   confirmedRoute.value = generatedRoutes.value[currentRouteIndex.value];
   currentPoiIndex.value = 0;
   isRoutePlanningMode.value = false;
+  selectedEndStart.value = false; // Reset this state
   updateRoutePoiMarkers();
   zoomToCurrentPoi();
   sheetState.value = "mid";
@@ -635,7 +740,12 @@ async function buildTour() {
       id: index,
       distance: (Math.random() * 5 + 2).toFixed(1),
       time: `${Math.floor(Math.random() * 120 + 30)} min`,
-      stops: data.stops || []
+      stops: (data.stops || []).map((stop, stopIndex) => ({
+        ...stop,
+        name: stop.name || `POI ${stopIndex + 1}`,
+        categories: ['Landmark', 'Cultural', 'Historical'].slice(0, Math.floor(Math.random() * 3) + 1),
+        description: 'This is a point of interest along your route with interesting features to explore.'
+      }))
     }));
     
     currentRouteIndex.value = 0;
@@ -677,6 +787,8 @@ async function generateRoute() {
   isGenerating.value = true;
   try {
     await buildTour();
+    // Flip the state to show route selection view
+    selectedEndStart.value = true;
   } finally {
     isGenerating.value = false;
   }
@@ -1201,7 +1313,6 @@ html, body, #app {
 .advanced-box {
   margin-top: 10px;
   margin-bottom: 10px;
-
 }
 
 .advanced-box h4 {
@@ -1233,5 +1344,167 @@ html, body, #app {
 .wiki-popup .leaflet-popup-content-wrapper {
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* Route Selection View */
+.route-selection-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.route-info-card {
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.route-stats-large {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.stat-icon {
+  font-size: 1.5rem;
+}
+
+.stat-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-weight: bold;
+  font-size: 1.1rem;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+/* POI List */
+.poi-list-container {
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.poi-list-title {
+  margin: 0 0 12px 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.poi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.poi-list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.poi-list-item.current-poi {
+  background: rgba(106, 92, 255, 0.15);
+  border-color: rgba(106, 92, 255, 0.5);
+}
+
+.poi-number {
+  width: 24px;
+  height: 24px;
+  background: rgba(106, 92, 255, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: bold;
+}
+
+.poi-list-item.current-poi .poi-number {
+  background: rgba(106, 92, 255, 0.8);
+  color: white;
+}
+
+.poi-content {
+  flex: 1;
+}
+
+.poi-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 2px;
+}
+
+.poi-categories {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* Enhanced POI details in navigation view */
+.poi-details {
+  margin: 10px 0;
+  padding: 10px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+}
+
+.poi-info {
+  font-size: 0.85rem;
+}
+
+.poi-categories {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #6a5cff;
+}
+
+.poi-description {
+  opacity: 0.8;
+  line-height: 1.3;
+}
+
+/* Route selection buttons with loading states */
+.route-nav-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Scrollbar styling for POI list */
+.poi-list-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.poi-list-container::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.1);
+  border-radius: 3px;
+}
+
+.poi-list-container::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.3);
+  border-radius: 3px;
+}
+
+.poi-list-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.5);
 }
 </style>
