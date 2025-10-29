@@ -291,11 +291,66 @@ def _real_build_tour(req: TourRequest):
 
     # stops: start -> sites -> [end_coord?]
     id_to_site = {s.id: s for s in sites}
-    stops_latlon = [start] + [(id_to_site[sid].lat, id_to_site[sid].lon) for sid in tour.site_ids]
-    if end_coord is not None:
-        stops_latlon.append(end_coord)
+    
+    # Create a lookup map from xid to POI data for easy matching
+    xid_to_poi_data = {p.xid: {
+        "xid": p.xid,
+        "name": p.name,
+        "lat": p.lat,
+        "lon": p.lon,
+        "kinds": getattr(p, "kinds", []),
+        "raw_rate": getattr(p, "raw_rate", None),
+        "score": getattr(p, "score", None),
+        "det": details_map.get(p.xid),
+        "wv": wiki_views.get(p.xid),
+        "distance_m": int(haversine_m(start[0], start[1], p.lat, p.lon)),
+    } for p in pois}
+    
+    # Build stops with full information
+    stops = []
+    
+    # 1. Start position (no POI data, just coordinates)
+    stops.append({
+        "lat": start[0],
+        "lon": start[1],
+        "is_start": True,
+        "is_end": False
+    })
+    
+    # 2. POI stops (merge with POI data)
+    for sid in tour.site_ids:
+        site = id_to_site[sid]
+        poi_data = xid_to_poi_data.get(sid, {})
+        # Merge site info with POI data
+        stop_info = {
+            "lat": site.lat,
+            "lon": site.lon,
+            "xid": sid,
+            "name": site.name or poi_data.get("name", "Unnamed"),
+            "kinds": site.kinds or poi_data.get("kinds", []),
+            "raw_rate": site.raw_rate or poi_data.get("raw_rate"),
+            "score": site.base_score or poi_data.get("score"),
+            "det": poi_data.get("det"),
+            "wv": poi_data.get("wv"),
+            "distance_m": poi_data.get("distance_m"),
+            "is_start": False,
+            "is_end": False
+        }
+        stops.append(stop_info)
+    
+    # 3. End position (if exists and different from start)
+    if end_coord is not None and end_coord != start:
+        stops.append({
+            "lat": end_coord[0],
+            "lon": end_coord[1],
+            "is_start": False,
+            "is_end": True
+        })
 
     # 2) Build snapped or straight path (GeoJSON lon/lat order)
+    # Extract lat/lon tuples for path building
+    stops_latlon = [(s["lat"], s["lon"]) for s in stops]
+    
     if req.router == "osrm" and getattr(req, "snap_path", False):
         base = req.router_url or os.getenv("OSRM_URL")
         coords_lonlat = []
@@ -341,7 +396,7 @@ def _real_build_tour(req: TourRequest):
             "stop_score": getattr(tour, "stop_score", 0),
             "passby_score": getattr(tour, "passby_score", 0.0),
         },
-        "stops": [{"lat": lat, "lon": lon} for (lat, lon) in stops_latlon],
+        "stops": stops,
         "path": path_geo,
         "pois": pois_data,                 # <— NEW: structured data for Vue popups
         "roundtrip": roundtrip,

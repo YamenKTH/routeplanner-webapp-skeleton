@@ -7,7 +7,7 @@ import AboutView from './views/AboutView.vue'
 import DemoView from './views/DemoView.vue'
 
 // Phone app subviews
-import MapView from './views/MapView.vue'
+import MapView from './views/mapview/MapView.vue'
 import ExploreView from './views/ExploreView.vue'
 import ProfileView from './views/ProfileView.vue'
 

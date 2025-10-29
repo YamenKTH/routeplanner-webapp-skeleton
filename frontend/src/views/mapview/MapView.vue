@@ -2,8 +2,16 @@
   <div id="map-container">
     <div id="map"></div>
 
-    <!-- Mode Toggle Button -->
-    <div class="mode-toggle">
+    <!-- Route Info Header (top of MapView container) -->
+    <RouteInfoHeader
+      v-if="confirmedRoute && !isRoutePlanningMode"
+      :direction="nextStopDirection"
+      :place="nextStopPlace"
+      :distance="nextStopDistance"
+    />
+
+    <!-- Mode Toggle Button (only shown in planning mode before routes are generated) -->
+    <div v-if="isRoutePlanningMode && generatedRoutes.length === 0" class="mode-toggle">
       <button class="mode-btn" @click="toggleMode">
         {{ isRoutePlanningMode ? '📍 View Route' : '🗺️ Plan New Route' }}
       </button>
@@ -20,139 +28,42 @@
 
       <div class="sheet-content">
         <!-- ROUTE NAVIGATION VIEW (when route is confirmed) -->
-        <div v-if="confirmedRoute && !isRoutePlanningMode" class="route-navigation-view">
-          <div class="route-summary">
-            <div class="route-stats">
-              <span class="stat">📍 {{ confirmedRoute.stops.length }} stops</span>
-              <span class="stat">📏 {{ confirmedRoute.distance }} km</span>
-              <span class="stat">🕒 {{ confirmedRoute.time }}</span>
-            </div>
-          </div>
-          
-          <div class="current-poi-card">
-            <h4>{{ currentPoiName }}</h4>
-            <div class="poi-navigation">
-              <button class="nav-btn" @click="prevPoi" :disabled="currentPoiIndex === 0">⬅️ Previous</button>
-              <span class="poi-counter">{{ currentPoiIndex + 1 }} / {{ confirmedRoute.stops.length }}</span>
-              <button class="nav-btn" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">Next ➡️</button>
-            </div>
-          </div>
-        </div>
+        <RouteNavigationView
+          v-if="confirmedRoute && !isRoutePlanningMode"
+          :confirmed-route="confirmedRoute"
+          :current-poi-index="currentPoiIndex"
+          @prev-poi="prevPoi"
+          @next-poi="nextPoi"
+          @poi-click="goToPoi"
+          @cancel-route="cancelRoute"
+        />
 
-        <!-- REGULAR VIEW (when in route planning mode) -->
-        <div v-else-if="isRoutePlanningMode">
-          <h3 class="panel-title">Plan Your Route</h3>
-          <h4 class="panel-title-small">Click anywhere on the map to choose your destination</h4>
+        <!-- PLANNING VIEW (settings before generate) -->
+        <RoutePlanningView
+          v-else-if="isRoutePlanningMode && generatedRoutes.length === 0"
+          :time-min="timeMin"
+          :radius="radius"
+          :trip-mode="tripMode"
+          :is-generating="isGenerating"
+          :can-generate="canGenerate"
+          :sheet-state="sheetState"
+          @update:timeMin="timeMin = $event"
+          @update:radius="radius = $event"
+          @update:tripMode="tripMode = $event"
+          @update:sheetState="sheetState = $event"
+          @generate-route="generateRoute"
+        />
 
-
-          <!-- Route selection for generated routes -->
-          <div v-if="generatedRoutes.length > 0" class="route-selection">
-            <div class="route-nav">
-              <button class="route-nav-btn" @click="prevRoute" :disabled="currentRouteIndex === 0">⬅️</button>
-              <span class="route-counter">Route {{ currentRouteIndex + 1 }} / {{ generatedRoutes.length }}</span>
-              <button class="route-nav-btn" @click="nextRoute" :disabled="currentRouteIndex === generatedRoutes.length - 1">➡️</button>
-            </div>
-            <button class="confirm-route-btn" @click="confirmRoute">Confirm This Route</button>
-          </div>
-
-          <!-- MAIN CONTROLS -->
-          <div class="dense-grid">
-            <!-- Time -->
-            <div class="panel-section compact">
-              <label class="label">Time</label>
-              <div class="slider-row cardish compact">
-                <span class="icon">🕒</span>
-                <input type="range" v-model.number="timeMin" min="10" max="180" step="5" class="horizontal-slider slim" />
-                <span class="slider-value">{{ (timeMin / 60).toFixed(1) }} h</span>
-              </div>
-            </div>
-
-            <!-- Trip mode -->
-            <div class="row-two compact radio-group">
-              <label class="chk-pill small">
-                <input type="radio" name="tripMode" value="round" v-model="tripMode" />
-                <img src="/src/icons/roundTripIcon.jpg" alt="Round Trip" class="option-icon" />
-                <span>Round Trip</span>
-              </label>
-              <label class="chk-pill small">
-                <input type="radio" name="tripMode" value="end" v-model="tripMode" />
-                <img src="/src/icons/endPositionsIcon.png" alt="End Position" class="option-icon" />
-                <span>End Position</span>
-              </label>
-            </div>
-
-            <!-- Start Position Display 
-            <div class="position-display cardish compact">
-              <div class="position-header">
-                <span class="icon">📍</span>
-                <span class="position-title">Start Position</span>
-              </div>
-              <div class="current-coordinates">
-                {{ lat.toFixed(5) }}, {{ lon.toFixed(5) }}
-              </div>
-            </div>
-          -->
-            <!-- End Position Selection 
-            <div v-if="tripMode === 'end'" class="end-position-controls">
-              <div class="cardish compact">
-                <div class="end-position-header">
-                  <span class="icon">🎯</span>
-                  <span class="end-position-title">Select End Position</span>
-                </div>
-                
-                <div v-if="!endPositionSelected" class="end-position-options">
-                  <div class="option-description">Click anywhere on the map or choose from a POI popup</div>
-                  <div class="selection-hint">End position not selected yet</div>
-                </div>
-                
-                <div v-else class="end-position-selected">
-                  <div class="selected-coordinates">
-                    <strong>End Position Set</strong>
-                    <div class="coord-display-small">{{ endLat.toFixed(5) }}, {{ endLon.toFixed(5) }}</div>
-                  </div>
-                  <button class="change-end-btn" @click="clearEndPosition">Change</button>
-                </div>
-              </div>
-            </div>
--->         
-            <!-- Advanced toggle in mid state -->
-            <button v-if="sheetState==='mid'" class="adv-toggle" @click="sheetState='expanded'">
-              Advanced settings
-            </button>
-
-            
-
-          </div>
-
-          <!-- ADVANCED -->
-          <transition name="fade">
-            <div v-if="sheetState==='expanded'" class="advanced-box">
-              <h4>Advanced settings</h4>
-              <!-- Radius -->
-              <div class="panel-section compact">
-                <label class="label">Radius</label>
-                <div class="slider-row cardish compact">
-                  <span class="icon">📏</span>
-                  <input type="range" v-model.number="radius" min="200" max="3000" step="50" class="horizontal-slider slim" />
-                  <span class="slider-value">{{ radius }} m</span>
-                </div>
-              </div>
-              <!-- Vertical action buttons -->
-              <div class="column-actions">
-                <button type="button" class="chk-pill small as-button full">Personalize</button>
-                <button type="button" class="chk-pill small as-button full">Add must-see</button>
-                <button type="button" class="chk-pill small as-button full">Speed</button>
-              </div>
-            </div>
-          </transition>
-          
-          <!-- Generate -->
-            <button class="generate-btn" @click="generateRoute" :disabled="isGenerating || !canGenerate">
-              <span class="btn-icon" :class="{ spinning: isGenerating }">▶️</span>
-              {{ isGenerating ? "Building..." : "Generate Route" }}
-            </button>
-
-        </div>
+        <!-- ROUTE SELECTION VIEW (after generate, before confirm) -->
+        <RouteSelectionView
+          v-else-if="isRoutePlanningMode && generatedRoutes.length > 0"
+          :generated-routes="generatedRoutes"
+          :current-route-index="currentRouteIndex"
+          @prev-route="prevRoute"
+          @next-route="nextRoute"
+          @confirm-route="confirmRoute"
+          @cancel-route="cancelRoute"
+        />
       </div>
     </div>
   </div>
@@ -160,16 +71,19 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
-import axios from "axios";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-import { useScorer } from "../composables/useScorer.js";
+import { useScorer } from "../../composables/useScorer.js";
+import { loadPois as loadPoisApi, buildTour as buildTourApi } from "../../api/mapApi.js";
+import RouteNavigationView from "./RouteNavigationView.vue";
+import RoutePlanningView from "./RoutePlanningView.vue";
+import RouteSelectionView from "./RouteSelectionView.vue";
+import RouteInfoHeader from "../../components/RouteInfoHeader.vue";
 
 const { catWeights } = useScorer();
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || "/api" });
 
 /* ---------------- state ---------------- */
 const timeMin = ref(60);
@@ -218,11 +132,6 @@ const sheetStyle = computed(() => ({
   transform: `translateY(${dragging.value ? dragTranslate : STATE_POS[sheetState.value]}%)`,
 }));
 
-const currentPoiName = computed(() => {
-  if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return "";
-  const stop = confirmedRoute.value.stops[currentPoiIndex.value];
-  return stop.name || `Stop ${currentPoiIndex.value + 1}`;
-});
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function getY(evt) {
@@ -488,9 +397,17 @@ function clearEndPosition() {
 
 /* ---------------- map click ---------------- */
 function onMapClick(e) {
+  // Disable map click popups when in route selection or navigation mode
+  if (isRoutePlanningMode.value && generatedRoutes.value.length > 0) {
+    return; // Route selection view - no popups
+  }
+  if (confirmedRoute.value && !isRoutePlanningMode.value) {
+    return; // Route navigation view - no popups
+  }
+  
   const { lat: clat, lng: clng } = e.latlng;
   
-  // Show compact coordinate popup for both modes
+  // Show compact coordinate popup for planning mode only
   const popupContent = buildPoiPopup({ lat: clat, lon: clng }, true);
   L.popup()
     .setLatLng(e.latlng)
@@ -500,14 +417,7 @@ function onMapClick(e) {
 
 /* ---------------- API: Load POIs ---------------- */
 async function loadPois() {
-  const payload = {
-    lat: lat.value,
-    lon: lon.value,
-    radius_m: radius.value,
-    cat_weights: { ...catWeights.value },
-  };
-
-  const { data } = await api.post("/api/pois", payload);
+  const data = await loadPoisApi(lat.value, lon.value, radius.value, catWeights.value);
 
   if (poiCluster) poiCluster.remove();
   poiCluster = L.markerClusterGroup({
@@ -573,6 +483,97 @@ function nextPoi() {
   }
 }
 
+function goToPoi(index) {
+  if (!confirmedRoute.value || !confirmedRoute.value.stops || index < 0 || index >= confirmedRoute.value.stops.length) return;
+  currentPoiIndex.value = index;
+  updateRoutePoiMarkers();
+  zoomToCurrentPoi();
+}
+
+function editRoute() {
+  // Switch back to planning mode to edit the route
+  isRoutePlanningMode.value = true;
+  sheetState.value = "mid";
+}
+
+function cancelRoute() {
+  // Clear all route data and return to planning mode
+  confirmedRoute.value = null;
+  generatedRoutes.value = [];
+  currentRouteIndex.value = 0;
+  currentPoiIndex.value = 0;
+  isRoutePlanningMode.value = true;
+  
+  // Remove route visualization
+  if (tourLayer) {
+    tourLayer.remove();
+    tourLayer = null;
+  }
+  routePoiMarkers.forEach(marker => marker.remove());
+  routePoiMarkers = [];
+  
+  sheetState.value = "mid";
+}
+
+// Navigation info for header (computed from RouteNavigationView logic)
+const currentStop = computed(() => {
+  if (!confirmedRoute.value?.stops || currentPoiIndex.value < 0) return null;
+  return confirmedRoute.value.stops[currentPoiIndex.value];
+});
+
+const nextStop = computed(() => {
+  if (!confirmedRoute.value?.stops || currentPoiIndex.value >= confirmedRoute.value.stops.length - 1) return null;
+  return confirmedRoute.value.stops[currentPoiIndex.value + 1];
+});
+
+function getStopName(stop, index) {
+  if (!stop) return "";
+  if (stop.is_start) return "Start Point";
+  if (stop.is_end) return "End Point";
+  return stop.name || `Stop ${index + 1}`;
+}
+
+const nextStopDirection = computed(() => {
+  if (!nextStop.value) return "🏁";
+  // TODO: Get actual direction from route data
+  return "➡️";
+});
+
+const nextStopPlace = computed(() => {
+  if (!nextStop.value) return "Destination reached";
+  return getStopName(nextStop.value, currentPoiIndex.value + 1);
+});
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Earth radius in meters
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c;
+}
+
+const nextStopDistance = computed(() => {
+  if (!nextStop.value || !currentStop.value) return null;
+  // Calculate distance between current and next stop
+  const dist = calculateDistance(
+    currentStop.value.lat,
+    currentStop.value.lon,
+    nextStop.value.lat,
+    nextStop.value.lon
+  );
+  if (dist < 1000) {
+    return `${Math.round(dist)} m`;
+  }
+  return `${(dist / 1000).toFixed(1)} km`;
+});
+
 function zoomToCurrentPoi() {
   if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return;
   
@@ -590,9 +591,9 @@ function updateRoutePoiMarkers() {
   // Add route POIs with special styling
   confirmedRoute.value.stops.forEach((stop, index) => {
     let icon;
-    if (index === 0) {
+    if (stop.is_start || index === 0) {
       icon = startIcon; // Start marker
-    } else if (index === confirmedRoute.value.stops.length - 1 && tripMode.value === "end") {
+    } else if (stop.is_end || (index === confirmedRoute.value.stops.length - 1 && tripMode.value === "end")) {
       icon = endIcon; // End marker
     } else if (index === currentPoiIndex.value) {
       icon = currentPoiIcon; // Current POI - larger and highlighted
@@ -600,8 +601,30 @@ function updateRoutePoiMarkers() {
       icon = routePoiIcon; // Other route POIs - blue color to distinguish from regular POIs
     }
 
+    // Build detailed popup for POI stops
+    let popupContent = "";
+    if (stop.is_start) {
+      popupContent = `<b>🚩 Start Point</b><br/>${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`;
+    } else if (stop.is_end) {
+      popupContent = `<b>🏁 End Point</b><br/>${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`;
+    } else {
+      // Use the same popup builder as regular POIs but with stop data
+      popupContent = buildPoiPopup({
+        name: stop.name,
+        xid: stop.xid,
+        lat: stop.lat,
+        lon: stop.lon,
+        kinds: stop.kinds || [],
+        raw_rate: stop.raw_rate,
+        score: stop.score,
+        det: stop.det,
+        wv: stop.wv,
+        distance_m: stop.distance_m
+      });
+    }
+
     const marker = L.marker([stop.lat, stop.lon], { icon })
-      .bindPopup(`<b>${stop.name || `Stop ${index + 1}`}</b><br/>Route point`);
+      .bindPopup(popupContent, { maxWidth: 280, className: "wiki-popup" });
     
     marker.addTo(map);
     routePoiMarkers.push(marker);
@@ -613,21 +636,20 @@ async function buildTour() {
   try {
     const isRound = tripMode.value === "round";
     const isEnd = tripMode.value === "end";
-    const payload = {
-      lat: Number(lat.value),
-      lon: Number(lon.value),
-      time_min: Number(timeMin.value),
-      radius_m: Number(radius.value),
+    
+    const data = await buildTourApi({
+      lat: lat.value,
+      lon: lon.value,
+      time_min: timeMin.value,
+      radius_m: radius.value,
       roundtrip: isRound,
-      end_lat: isEnd && endPositionSelected.value ? Number(endLat.value) : null,
-      end_lon: isEnd && endPositionSelected.value ? Number(endLon.value) : null,
+      end_lat: isEnd && endPositionSelected.value ? endLat.value : null,
+      end_lon: isEnd && endPositionSelected.value ? endLon.value : null,
       router: "osrm",
       router_url: "http://osrm:5000",
       snap_path: true,
-      cat_weights: { ...catWeights.value },
-    };
-
-    const { data } = await api.post("/api/tour", payload);
+      cat_weights: catWeights.value,
+    });
     
     // For now, create 5 hardcoded routes (in real implementation, these would come from backend)
     generatedRoutes.value = Array(5).fill(null).map((_, index) => ({
@@ -774,7 +796,7 @@ html, body, #app {
   position: absolute;
   top: 80px;
   right: 20px;
-  z-index: 1000;
+  z-index: 1003;
 }
 
 .mode-btn {
@@ -837,22 +859,6 @@ html, body, #app {
 .sheet-content {
   padding: 6px 14px 14px;
   overflow: hidden;
-}
-
-.panel-title {
-  text-align: center;
-  margin: 0 0 1px;
-  font-weight: 444;
-  font-size: 1rem;
-}
-
-.panel-title-small {
-  text-align: center;
-  margin: 0 0 1px;
-  font-weight: 444;
-  font-size: 0.8rem;
-  color: 666;
-  font-style: italic;
 }
 
 /* Position Display */
@@ -938,291 +944,6 @@ html, body, #app {
   cursor: pointer;
 }
 
-/* Route Navigation View */
-.route-navigation-view {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.route-summary {
-  background: rgba(255,255,255,0.08);
-  border-radius: 10px;
-  padding: 12px;
-}
-
-.route-stats {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.85rem;
-}
-
-.stat {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.current-poi-card {
-  background: rgba(255,255,255,0.08);
-  border-radius: 10px;
-  padding: 12px;
-}
-
-.current-poi-card h4 {
-  margin: 0 0 10px 0;
-  text-align: center;
-}
-
-.poi-navigation {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.nav-btn {
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.3);
-  color: #eef4ff;
-  padding: 6px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-
-.nav-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.poi-counter {
-  font-weight: bold;
-  font-size: 0.9rem;
-}
-
-/* Route Selection */
-.route-selection {
-  background: rgba(255,255,255,0.08);
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 12px;
-}
-
-.route-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.route-nav-btn {
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.3);
-  color: #eef4ff;
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.route-nav-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.route-counter {
-  font-weight: bold;
-}
-
-.confirm-route-btn {
-  width: 100%;
-  background: linear-gradient(135deg, #00c853 0%, #64dd17 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 10px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-/* Dense layout */
-.dense-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
-.panel-section.compact {
-  margin: 10px;
-}
-
-.label {
-  font-size: .8rem;
-  color: #d9e6ff;
-  font-weight: 700;
-  margin-bottom: 2px;
-}
-
-/* Slider */
-.cardish.compact {
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 10px;
-  padding: 8px 10px;
-}
-
-.slider-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.icon {
-  font-size: 1.05rem;
-}
-
-.horizontal-slider.slim {
-  flex: 1;
-  -webkit-appearance: none;
-  height: 5px;
-  border-radius: 4px;
-  background: linear-gradient(90deg,#7f66ff 0%,#b06cff 100%);
-  cursor: pointer;
-}
-
-.horizontal-slider.slim::-webkit-slider-thumb,
-.horizontal-slider.slim::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid #7f66ff;
-  cursor: pointer;
-}
-
-.slider-value {
-  min-width: 56px;
-  text-align: right;
-  font-weight: 800;
-  font-size: 0.9rem;
-}
-
-/* Pills */
-.row-two.compact {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.chk-pill.small {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  justify-content: center;
-  background: linear-gradient(90deg,#eef 0%,#f6f0ff 100%);
-  color: #4b3d8f;
-  border-radius: 10px;
-  padding: 8px 6px;
-  font-weight: 700;
-  font-size: 0.9rem;
-  border: none;
-}
-
-.chk-pill.small input[type="radio"] {
-  accent-color: #6a5cff;
-  transform: scale(1.2);
-}
-
-.option-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  object-fit: cover;
-}
-
-.as-button {
-  cursor: pointer;
-}
-
-.as-button.full {
-  width: 100%;
-}
-
-/* Generate button */
-.generate-btn {
-  width: 100%;
-  background: linear-gradient(135deg,#6a5cff 0%,#ff3db3 100%);
-  color: white;
-  border: none;
-  border-radius: 12px;
-  padding: 12px 0;
-  font-size: 1.02rem;
-  font-weight: 900;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(0,0,0,0.35);
-  transition: transform .1s ease, box-shadow .2s ease;
-}
-
-.generate-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 28px rgba(0,0,0,0.45);
-}
-
-.btn-icon {
-  font-size: 1.1rem;
-}
-
-.spinning {
-  display: inline-block;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Advanced */
-.adv-toggle {
-  background: transparent;
-  border: none;
-  color: #d9e6ff;
-  font-size: .9rem;
-  text-decoration: underline;
-  cursor: pointer;
-  justify-self: start;
-  margin-bottom: 6px;
-}
-
-.advanced-box {
-  margin-top: 10px;
-  margin-bottom: 10px;
-
-}
-
-.advanced-box h4 {
-  margin: 0 0 6px 2px;
-}
-
-/* Vertical actions */
-.column-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Fade transition */
-.fade-enter-active, .fade-leave-active {
-  transition: opacity .2s;
-}
-
-.fade-enter-from, .fade-leave-to {
-  opacity: 0;
-}
 
 /* Popup styles */
 .leaflet-popup-content {
