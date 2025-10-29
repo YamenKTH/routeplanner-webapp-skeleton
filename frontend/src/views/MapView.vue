@@ -40,21 +40,13 @@
             </label>
           </div>
 
-          <!-- Confirm selected endpoint (shown only when in End mode and a map tap exists) -->
-        <div v-if="tripMode==='end' && candidateEnd" class="cardish compact">
-          <div style="font-weight:800; margin-bottom:6px;">Destination selected</div>
-          <div style="font-size:.85rem; opacity:.9; margin-bottom:8px;">
-            {{ candidateEnd.lat.toFixed(5) }}, {{ candidateEnd.lng.toFixed(5) }}
+          <!-- Destination info display -->
+          <div v-if="tripMode==='end' && endLat && endLon" class="cardish compact">
+            <div style="font-weight:800; margin-bottom:6px;">Destination selected</div>
+            <div style="font-size:.85rem; opacity:.9;">
+              {{ endLat.toFixed(5) }}, {{ endLon.toFixed(5) }}
+            </div>
           </div>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="chk-pill small as-button full" @click="confirmEnd">
-              Use as End Point
-            </button>
-            <button type="button" class="chk-pill small as-button full" @click="cancelCandidate">
-              Cancel
-            </button>
-          </div>
-        </div>
 
           <!-- Generate -->
           <button class="generate-btn" @click="generateRoute" :disabled="isGenerating || !canGenerate">
@@ -73,7 +65,7 @@
           <div v-if="sheetState==='expanded'" class="advanced-box">
             <h4>Advanced settings</h4>
 
-            <!-- Radius (moved here) -->
+            <!-- Radius -->
             <div class="panel-section compact">
               <label class="label">Radius</label>
               <div class="slider-row cardish compact">
@@ -104,8 +96,8 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-import { useScorer } from '../composables/useScorer.js'
-const { catWeights } = useScorer()
+import { useScorer } from "../composables/useScorer.js";
+const { catWeights } = useScorer();
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || "/api" });
 
@@ -121,6 +113,8 @@ let map, origin, circle, poiCluster, tourLayer;
 let endMarker = null;
 const endLat = ref(null);
 const endLon = ref(null);
+const candidateEnd = ref(null);
+let tempEndMarker = null;
 window._stopMarkers = [];
 
 /* ---------------- bottom sheet ---------------- */
@@ -130,24 +124,27 @@ const sheetState = ref("mid");
 const STEP_TRIGGER_PX = 28;
 
 const dragging = ref(false);
-let dragStartY = 0, lastY = 0, dragStartTranslate = STATE_POS[sheetState.value], dragTranslate = STATE_POS[sheetState.value];
-
-const candidateEnd = ref(null); // { lat, lng } from the last tap while in "End Position"
-let tempEndMarker = null;       // preview marker before confirm
+let dragStartY = 0,
+  lastY = 0,
+  dragStartTranslate = STATE_POS[sheetState.value],
+  dragTranslate = STATE_POS[sheetState.value];
 
 const canGenerate = computed(() => {
   if (tripMode.value === "round") return true;
-  return endLat !== null && endLon !== null; // only after confirm
+  return !!endLat.value && !!endLon.value;
 });
 
 const sheetStyle = computed(() => ({
   transform: `translateY(${dragging.value ? dragTranslate : STATE_POS[sheetState.value]}%)`,
 }));
 
-function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
 function getY(evt) {
   if (evt.touches && evt.touches.length) return evt.touches[0].clientY;
-  if (evt.changedTouches && evt.changedTouches.length) return evt.changedTouches[0].clientY;
+  if (evt.changedTouches && evt.changedTouches.length)
+    return evt.changedTouches[0].clientY;
   return -evt.clientY;
 }
 function onPointerDown(e) {
@@ -174,7 +171,8 @@ function snapStepwiseByPixels(currentState, startY, endY) {
   const dyPx = startY - endY;
   const idx = STATES.indexOf(currentState);
   if (dyPx >= STEP_TRIGGER_PX) return idx > 0 ? STATES[idx - 1] : currentState;
-  if (dyPx <= -STEP_TRIGGER_PX) return idx < STATES.length - 1 ? STATES[idx + 1] : currentState;
+  if (dyPx <= -STEP_TRIGGER_PX)
+    return idx < STATES.length - 1 ? STATES[idx + 1] : currentState;
   return currentState;
 }
 function onPointerUp() {
@@ -188,23 +186,26 @@ function onPointerUp() {
   window.removeEventListener("touchend", onPointerUp);
 }
 
-function confirmEnd() {
-  if (!candidateEnd.value) return;
-  endLat = candidateEnd.value.lat;
-  endLon = candidateEnd.value.lng;
-
-  // Commit to a permanent end marker
-  if (endMarker) endMarker.remove();
-  endMarker = L.marker([endLat, endLon], { icon: endIcon }).addTo(map);
-
-  // Clear preview state
-  candidateEnd.value = null;
-  if (tempEndMarker) { tempEndMarker.remove(); tempEndMarker = null; }
-}
-
-function cancelCandidate() {
-  candidateEnd.value = null;
-  if (tempEndMarker) { tempEndMarker.remove(); tempEndMarker = null; }
+/* ---------------- feedback helper ---------------- */
+function toast(msg) {
+  const el = document.createElement("div");
+  el.textContent = msg;
+  Object.assign(el.style, {
+    position: "fixed",
+    bottom: "90px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "rgba(15,22,32,0.9)",
+    color: "#eef4ff",
+    padding: "8px 14px",
+    borderRadius: "8px",
+    fontSize: ".85rem",
+    zIndex: "9999",
+    transition: "opacity 0.3s",
+  });
+  document.body.appendChild(el);
+  setTimeout(() => (el.style.opacity = "0"), 1000);
+  setTimeout(() => el.remove(), 1300);
 }
 
 /* ---------------- marker icons ---------------- */
@@ -212,91 +213,73 @@ const startIcon = L.icon({
   iconUrl: new URL("/src/icons/StartMarker.png", import.meta.url).href,
   iconSize: [40, 40],
 });
-
 const midIcon = L.icon({
   iconUrl: new URL("/src/icons/RoutePOIMarker.png", import.meta.url).href,
   iconSize: [20, 20],
 });
-
 const endIcon = L.icon({
   iconUrl: new URL("/src/icons/endPositionsIcon.png", import.meta.url).href,
   iconSize: [35, 35],
-
 });
 
-const poiGreenIcon = L.icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
-  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-  iconSize: [22, 34],
-  iconAnchor: [11, 34],
-  shadowSize: [41, 41],
-});
-const poiGrayIcon = L.icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-grey.png",
-  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-  iconSize: [22, 34],
-  iconAnchor: [11, 34],
-  shadowSize: [41, 41],
-});
+/* ---------------- map click ---------------- */
+function onMapClick(e) {
+  if (tripMode.value !== "end") return;
 
-/* ---------------- popup builder ---------------- */
-function buildPoiPopup(props) {
-  try {
-    const name = props?.name || "Unnamed";
-    const kinds = (props?.kinds || []).slice(0, 6).join(", ");
-    const rawRate = props?.raw_rate ?? "";
-    const d = props?.distance_m ?? props?.d ?? "";
-    const det = props?.det || {};
-    const wv = props?.wv || props?.wiki || null;
+  const { lat: clat, lng: clng } = e.latlng;
+  candidateEnd.value = { lat: clat, lng: clng };
 
-    let wikiExtract = det?.wikipedia_extracts?.text || "";
-    if (wikiExtract && wikiExtract.length > 280) wikiExtract = wikiExtract.slice(0, 280) + "…";
+  // Show or update marker
+  if (!tempEndMarker) {
+    tempEndMarker = L.marker([clat, clng], { icon: endIcon }).addTo(map);
+  } else {
+    tempEndMarker.setLatLng([clat, clng]);
+  }
 
-    const xid = props?.xid;
-    const otm = det?.otm || det?.url || (xid ? `https://opentripmap.com/en/card?xid=${encodeURIComponent(xid)}` : "#");
+  // Immediately confirm
+  confirmEnd();
+}
 
-    let wikiLine = "";
-    if (wv?.project && wv?.title) {
-      const wpUrl = `https://${wv.project}/wiki/${wv.title}`;
-      const views = (wv.views_365 ?? 0).toLocaleString();
-      const score = (wv.score ?? props?.score ?? 0);
-      wikiLine = `📖 Wikipedia views (365d): <b>${views}</b> | Score: <b>${Math.round(score)}</b> • <a target="_blank" href="${wpUrl}">Open article</a>`;
-    }
+/* ---------------- confirm ---------------- */
+function confirmEnd() {
+  if (!candidateEnd.value) return;
+  endLat.value = candidateEnd.value.lat;
+  endLon.value = candidateEnd.value.lng;
 
-    return `
-      <b>${name}</b><br/>
-      OTM rate: ${rawRate} • Distance: ${d ? `${d} m` : ""}<br/>
-      <small>${kinds}</small>
-      <div style="margin-top:6px">${wikiExtract || ""}</div>
-      <div style="margin-top:6px">${wikiLine}</div>
-      <div style="margin-top:6px"><a target="_blank" href="${otm}">Open in OpenTripMap</a></div>
-    `;
-  } catch {
-    const name = props?.name || "Place";
-    const kinds = (props?.kinds || []).slice(0, 6).join(", ");
-    return `<b>${name}</b><br/><small>${kinds}</small>`;
+  if (endMarker) endMarker.remove();
+  endMarker = L.marker([endLat.value, endLon.value], { icon: endIcon }).addTo(map);
+
+  toast("✅ End point set!");
+  candidateEnd.value = null;
+  if (tempEndMarker) {
+    tempEndMarker.remove();
+    tempEndMarker = null;
   }
 }
 
 /* ---------------- API: Load POIs ---------------- */
 async function loadPois() {
-  const payload = { lat: lat.value, lon: lon.value, radius_m: radius.value, cat_weights: { ...catWeights.value }, };
+  const payload = {
+    lat: lat.value,
+    lon: lon.value,
+    radius_m: radius.value,
+    cat_weights: { ...catWeights.value },
+  };
   const { data } = await api.post("/api/pois", payload);
 
   if (poiCluster) poiCluster.remove();
-  poiCluster = L.markerClusterGroup({ spiderfyOnMaxZoom: true, showCoverageOnHover: false });
+  poiCluster = L.markerClusterGroup({
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+  });
 
   (data.features || []).forEach((f) => {
     const [gLon, gLat] = f.geometry.coordinates;
     const props = f.properties || {};
-    const popupHtml = props.html_popup || props.popup_html || buildPoiPopup(props);
-    const hasWiki = !!((props.wv || props.wiki)?.title);
-    const icon = hasWiki ? poiGreenIcon : poiGrayIcon;
-    const marker = L.marker([gLat, gLon], { icon }).bindPopup(popupHtml, {
-      maxWidth: 420, // a bit wider like in your screenshot
-      className: "wiki-popup",
-    });
-    poiCluster.addLayer(marker);
+    const popupHtml = props.html_popup || props.popup_html || "";
+    const icon = props.wv ? L.icon({ iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png" }) :
+      L.icon({ iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-grey.png" });
+    poiCluster.addLayer(L.marker([gLat, gLon], { icon }).bindPopup(popupHtml));
   });
 
   map.addLayer(poiCluster);
@@ -305,10 +288,8 @@ async function loadPois() {
 /* ---------------- API: Build Tour ---------------- */
 async function buildTour() {
   try {
-    if (!window._stopMarkers) window._stopMarkers = [];
-
     const isRound = tripMode.value === "round";
-    const isEnd   = tripMode.value === "end";
+    const isEnd = tripMode.value === "end";
 
     const payload = {
       lat: Number(lat.value),
@@ -316,10 +297,10 @@ async function buildTour() {
       time_min: Number(timeMin.value),
       radius_m: Number(radius.value),
       roundtrip: isRound,
-      end_lat: isEnd ? Number(endLat.value) : null,   
-      end_lon: isEnd ? Number(endLon.value) : null,   
+      end_lat: isEnd ? Number(endLat.value) : null,
+      end_lon: isEnd ? Number(endLon.value) : null,
       router: "osrm",
-      router_url: "http://osrm:5000",       
+      router_url: "http://osrm:5000",
       snap_path: true,
       cat_weights: { ...catWeights.value },
     };
@@ -332,106 +313,82 @@ async function buildTour() {
 
     if (data?.path) {
       tourLayer = L.geoJSON(data.path, {
-        style: { color: "#C42DE3", weight: 3.5, opacity: 1 }
+        style: { color: "#C42DE3", weight: 3.5, opacity: 1 },
       }).addTo(map);
     }
 
     const stops = Array.isArray(data?.stops) ? data.stops : [];
     stops.forEach((s, idx) => {
       const latlng = [s.lat, s.lon];
-
       if (idx === 0) {
         origin.setLatLng(latlng);
-        return;
-      }
-
-      const isLast = idx === stops.length - 1;
-
-      // Only show an end marker if user chose explicit end mode
-      if (isEnd) {
+      } else if (idx === stops.length - 1 && isEnd) {
         if (endMarker) endMarker.remove();
         endMarker = L.marker(latlng, { icon: endIcon, draggable: true }).addTo(map);
         endMarker.on("dragend", async (e) => {
           const c = e.target.getLatLng();
-          endLat.value = c.lat;                
-          endLon.value = c.lng;               
+          endLat.value = c.lat;
+          endLon.value = c.lng;
           await buildTour();
         });
         window._stopMarkers.push(endMarker);
-        return;
+      } else {
+        const m = L.marker(latlng, { icon: midIcon }).addTo(map);
+        window._stopMarkers.push(m);
       }
-
-      // Intermediate POIs
-      if (!isLast){
-        const m = L.marker(latlng, { icon: midIcon }).addTo(map); 
-      }
-      // const m = L.marker(latlng, { icon: midIcon }).addTo(map); 
-
-      
-      window._stopMarkers.push(m);
     });
 
-    // Fit bounds safely
-    if (tourLayer) {
-      const b = tourLayer.getBounds();
-      if (b && b.isValid()) map.fitBounds(b, { padding: [20, 20] });
-    } else if (stops.length) {
-      const bounds = L.latLngBounds(stops.map(p => [p.lat, p.lon]));
-      if (bounds.isValid()) map.fitBounds(bounds, { padding: [20, 20] });
-    }
+    if (tourLayer && tourLayer.getBounds().isValid())
+      map.fitBounds(tourLayer.getBounds(), { padding: [20, 20] });
 
     sheetState.value = "peek";
   } catch (err) {
     console.error("Failed to build tour:", err);
-    // TODO: toast/snackbar
   }
 }
 
-/* ---------------- route button ---------------- */
+/* ---------------- generate ---------------- */
 async function generateRoute() {
   if (isGenerating.value) return;
   isGenerating.value = true;
-  try { await buildTour(); } finally { isGenerating.value = false; }
+  try {
+    await buildTour();
+  } finally {
+    isGenerating.value = false;
+  }
 }
 
 /* ---------------- map setup ---------------- */
-function onMapClick(e) {
-  // Only handle taps when user selected "End Position"
-  if (tripMode.value !== "end") return;
-
-  const { lat: clat, lng: clng } = e.latlng;
-
-  // Store candidate and show a temporary marker (non-draggable)
-  candidateEnd.value = { lat: clat, lng: clng };
-
-  if (!tempEndMarker) {
-    tempEndMarker = L.marker([clat, clng], { icon: endIcon }).addTo(map);
-  } else {
-    tempEndMarker.setLatLng([clat, clng]);
-  }
-
-  // Bring the sheet up a bit so the confirm UI is visible
-  sheetState.value = "mid";
-}
-
 onMounted(() => {
   const el = document.getElementById("map");
   if (el) el.style.height = "100%";
 
   map = L.map("map").setView([lat.value, lon.value], 14);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+  }).addTo(map);
 
   origin = L.marker([lat.value, lon.value], { draggable: true, icon: startIcon }).addTo(map);
   origin.on("dragend", async (e) => {
     const c = e.target.getLatLng();
-    lat.value = c.lat; lon.value = c.lng;
+    lat.value = c.lat;
+    lon.value = c.lng;
     circle.setLatLng(c);
-    if (tourLayer) { tourLayer.remove(); tourLayer = null; }
-    window._stopMarkers.forEach((m) => m.remove()); window._stopMarkers = [];
+    if (tourLayer) {
+      tourLayer.remove();
+      tourLayer = null;
+    }
+    window._stopMarkers.forEach((m) => m.remove());
+    window._stopMarkers = [];
     await loadPois();
   });
 
-  circle = L.circle([lat.value, lon.value], { radius: radius.value, fillOpacity: 0.15 , color: "#1BB9F5", weight: 2.9 }).addTo(map);
+  circle = L.circle([lat.value, lon.value], {
+    radius: radius.value,
+    fillOpacity: 0.15,
+    color: "#1BB9F5",
+    weight: 2.9,
+  }).addTo(map);
   loadPois();
   map.on("click", onMapClick);
 });
@@ -444,19 +401,28 @@ onBeforeUnmount(() => {
 });
 
 watch(radius, (v) => {
-  if (circle) { circle.setRadius(v); loadPois(); }
-});
-
-watch(tripMode, (v) => {
-  if (v === "round") {
-    // Clear any preview or committed endpoint when switching back to round-trip
-    candidateEnd.value = null;
-    if (tempEndMarker) { tempEndMarker.remove(); tempEndMarker = null; }
-    if (endMarker) { endMarker.remove(); endMarker = null; }
-    endLat = endLon = null;
+  if (circle) {
+    circle.setRadius(v);
+    loadPois();
   }
 });
 
+watch(tripMode, (v) => {
+  if (v === "end") {
+    toast("🗺️ Tap on the map to choose your destination");
+  } else {
+    candidateEnd.value = null;
+    if (tempEndMarker) {
+      tempEndMarker.remove();
+      tempEndMarker = null;
+    }
+    if (endMarker) {
+      endMarker.remove();
+      endMarker = null;
+    }
+    endLat.value = endLon.value = null;
+  }
+});
 </script>
 
 <style>
