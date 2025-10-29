@@ -651,14 +651,21 @@ async function buildTour() {
       cat_weights: catWeights.value,
     });
     
-    // For now, create 5 hardcoded routes (in real implementation, these would come from backend)
-    generatedRoutes.value = Array(5).fill(null).map((_, index) => ({
-      ...data,
-      id: index,
-      distance: (Math.random() * 5 + 2).toFixed(1),
-      time: `${Math.floor(Math.random() * 120 + 30)} min`,
-      stops: data.stops || []
-    }));
+    // Backend now returns multiple routes in data.routes array
+    // Support both old format (single route) and new format (multiple routes)
+    if (data.routes && Array.isArray(data.routes)) {
+      generatedRoutes.value = data.routes;
+    } else {
+      // Fallback for old API format (single route)
+      generatedRoutes.value = [{
+        ...data,
+        id: "default",
+        name: "default",
+        distance: data.distance || "N/A",
+        time: data.time || "N/A",
+        stops: data.stops || []
+      }];
+    }
     
     currentRouteIndex.value = 0;
     confirmedRoute.value = null;
@@ -685,8 +692,45 @@ function displayRoute(routeData) {
     }).addTo(map);
   }
 
-  // Use the special route POI markers instead of the default ones
-  updateRoutePoiMarkers();
+  // Add markers for the route being displayed (during route selection)
+  if (routeData?.stops && routeData.stops.length > 0) {
+    routeData.stops.forEach((stop, index) => {
+      let icon;
+      if (stop.is_start || index === 0) {
+        icon = startIcon;
+      } else if (stop.is_end || index === routeData.stops.length - 1) {
+        icon = endIcon;
+      } else {
+        icon = routePoiIcon;
+      }
+
+      let popupContent = "";
+      if (stop.is_start) {
+        popupContent = `<b>🚩 Start Point</b><br/>${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`;
+      } else if (stop.is_end) {
+        popupContent = `<b>🏁 End Point</b><br/>${stop.lat.toFixed(5)}, ${stop.lon.toFixed(5)}`;
+      } else {
+        popupContent = buildPoiPopup({
+          name: stop.name,
+          xid: stop.xid,
+          lat: stop.lat,
+          lon: stop.lon,
+          kinds: stop.kinds || [],
+          raw_rate: stop.raw_rate,
+          score: stop.score,
+          det: stop.det,
+          wv: stop.wv,
+          distance_m: stop.distance_m
+        });
+      }
+
+      const marker = L.marker([stop.lat, stop.lon], { icon })
+        .bindPopup(popupContent, { maxWidth: 280, className: "wiki-popup" });
+      
+      marker.addTo(map);
+      routePoiMarkers.push(marker);
+    });
+  }
 
   if (tourLayer && tourLayer.getBounds().isValid()) {
     map.fitBounds(tourLayer.getBounds(), { padding: [20, 20] });

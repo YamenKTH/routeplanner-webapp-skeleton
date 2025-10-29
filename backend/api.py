@@ -271,23 +271,83 @@ def _real_build_tour(req: TourRequest):
         n_sites=len(sites),
     )
 
-    tour = simple_greedy_solver(
-        start=start,
-        end=end,
-        budget_s=budget_s,
-        sites=sites,
-        M=M,
-        site_idx_offset=site_idx_offset,
-        end_index=end_index,
-        roundtrip=roundtrip,
-        candidate_mask=mask,
-        dwell_time_s=int(req.dwell_sec),
-        coords=coords,
-        walk_speed_mps=float(req.walk_speed_mps),
-        backtrack_angle_deg=150.0,
-        backtrack_penalty_per_m=0.15,
-        edge_reuse_penalty_s=20.0,
-    )
+    # Generate 2-3 routes with different parameter strategies
+    route_strategies = [
+        {
+            "name": "balanced",
+            "description": "Balanced route",
+            "backtrack_angle_deg": 150.0,
+            "backtrack_penalty_per_m": 0.15,
+            "edge_reuse_penalty_s": 20.0,
+            "dwell_time_s": int(req.dwell_sec),
+            "budget_multiplier": 1.0,  # 100% of budget
+            "score_multiplier": 1.0,  # Normal scoring
+        },
+        {
+            "name": "score-first",
+            "description": "Prioritize high-scoring POIs",
+            "backtrack_angle_deg": 150.0,
+            "backtrack_penalty_per_m": 0.08,  # Lower penalty allows longer detours for high scores
+            "edge_reuse_penalty_s": 15.0,
+            "dwell_time_s": int(req.dwell_sec * 0.8),  # Shorter dwell = more stops possible
+            "budget_multiplier": 1.0,
+            "score_multiplier": 1.5,  # Boost scores to favor high-scoring POIs
+        },
+        {
+            "name": "compact",
+            "description": "Compact route with fewer stops",
+            "backtrack_angle_deg": 145.0,
+            "backtrack_penalty_per_m": 0.20,
+            "edge_reuse_penalty_s": 25.0,
+            "dwell_time_s": int(req.dwell_sec * 1.5),  # Longer dwell = fewer stops
+            "budget_multiplier": 0.9,  # 90% of budget = shorter route
+            "score_multiplier": 1.0,
+        },
+    ]
+
+    # Generate routes with different strategies
+    tours = []
+    for strategy in route_strategies:
+        # Apply score multiplier to sites for this strategy (create modified copies)
+        if strategy["score_multiplier"] != 1.0:
+            from app_tour import Site
+            modified_sites = [
+                Site(
+                    id=site.id,
+                    name=site.name,
+                    lat=site.lat,
+                    lon=site.lon,
+                    base_score=site.base_score * strategy["score_multiplier"],
+                    members=site.members,
+                    kinds=getattr(site, "kinds", []),
+                    raw_rate=getattr(site, "raw_rate", None),
+                )
+                for site in sites
+            ]
+        else:
+            modified_sites = sites
+        
+        # Use modified budget for this strategy
+        strategy_budget = int(budget_s * strategy["budget_multiplier"])
+        
+        tour = simple_greedy_solver(
+            start=start,
+            end=end,
+            budget_s=strategy_budget,
+            sites=modified_sites,
+            M=M,
+            site_idx_offset=site_idx_offset,
+            end_index=end_index,
+            roundtrip=roundtrip,
+            candidate_mask=mask,
+            dwell_time_s=strategy["dwell_time_s"],
+            coords=coords,
+            walk_speed_mps=float(req.walk_speed_mps),
+            backtrack_angle_deg=strategy["backtrack_angle_deg"],
+            backtrack_penalty_per_m=strategy["backtrack_penalty_per_m"],
+            edge_reuse_penalty_s=strategy["edge_reuse_penalty_s"],
+        )
+        tours.append((tour, strategy))
 
     # stops: start -> sites -> [end_coord?]
     id_to_site = {s.id: s for s in sites}
@@ -305,71 +365,102 @@ def _real_build_tour(req: TourRequest):
         "wv": wiki_views.get(p.xid),
         "distance_m": int(haversine_m(start[0], start[1], p.lat, p.lon)),
     } for p in pois}
-    
-    # Build stops with full information
-    stops = []
-    
-    # 1. Start position (no POI data, just coordinates)
-    stops.append({
-        "lat": start[0],
-        "lon": start[1],
-        "is_start": True,
-        "is_end": False
-    })
-    
-    # 2. POI stops (merge with POI data)
-    for sid in tour.site_ids:
-        site = id_to_site[sid]
-        poi_data = xid_to_poi_data.get(sid, {})
-        # Merge site info with POI data
-        stop_info = {
-            "lat": site.lat,
-            "lon": site.lon,
-            "xid": sid,
-            "name": site.name or poi_data.get("name", "Unnamed"),
-            "kinds": site.kinds or poi_data.get("kinds", []),
-            "raw_rate": site.raw_rate or poi_data.get("raw_rate"),
-            "score": site.base_score or poi_data.get("score"),
-            "det": poi_data.get("det"),
-            "wv": poi_data.get("wv"),
-            "distance_m": poi_data.get("distance_m"),
-            "is_start": False,
-            "is_end": False
-        }
-        stops.append(stop_info)
-    
-    # 3. End position (if exists and different from start)
-    if end_coord is not None and end_coord != start:
-        stops.append({
-            "lat": end_coord[0],
-            "lon": end_coord[1],
-            "is_start": False,
-            "is_end": True
-        })
 
-    # 2) Build snapped or straight path (GeoJSON lon/lat order)
-    # Extract lat/lon tuples for path building
-    stops_latlon = [(s["lat"], s["lon"]) for s in stops]
-    
-    if req.router == "osrm" and getattr(req, "snap_path", False):
-        base = req.router_url or os.getenv("OSRM_URL")
-        coords_lonlat = []
-        for i in range(len(stops_latlon) - 1):
-            seg_latlon, _, _ = osrm_route_leg(base, stops_latlon[i], stops_latlon[i + 1])  # [[lat,lon],...]
-            seg_lonlat = [[lon, lat] for (lat, lon) in seg_latlon]
-            coords_lonlat.extend(seg_lonlat if not coords_lonlat else seg_lonlat[1:])
-        path_geo = {
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": coords_lonlat},
-            "properties": {"snapped": True, "router": "osrm"},
+    # Helper function to build a route response from a tour
+    def build_route_response(tour, strategy_info):
+        # Build stops with full information
+        stops = []
+        
+        # 1. Start position (no POI data, just coordinates)
+        stops.append({
+            "lat": start[0],
+            "lon": start[1],
+            "is_start": True,
+            "is_end": False
+        })
+        
+        # 2. POI stops (merge with POI data)
+        for sid in tour.site_ids:
+            site = id_to_site[sid]
+            poi_data = xid_to_poi_data.get(sid, {})
+            # Merge site info with POI data
+            stop_info = {
+                "lat": site.lat,
+                "lon": site.lon,
+                "xid": sid,
+                "name": site.name or poi_data.get("name", "Unnamed"),
+                "kinds": site.kinds or poi_data.get("kinds", []),
+                "raw_rate": site.raw_rate or poi_data.get("raw_rate"),
+                "score": site.base_score or poi_data.get("score"),
+                "det": poi_data.get("det"),
+                "wv": poi_data.get("wv"),
+                "distance_m": poi_data.get("distance_m"),
+                "is_start": False,
+                "is_end": False
+            }
+            stops.append(stop_info)
+        
+        # 3. End position (if exists and different from start)
+        if end_coord is not None and end_coord != start:
+            stops.append({
+                "lat": end_coord[0],
+                "lon": end_coord[1],
+                "is_start": False,
+                "is_end": True
+            })
+
+        # Build snapped or straight path (GeoJSON lon/lat order)
+        stops_latlon = [(s["lat"], s["lon"]) for s in stops]
+        
+        if req.router == "osrm" and getattr(req, "snap_path", False):
+            base = req.router_url or os.getenv("OSRM_URL")
+            coords_lonlat = []
+            for i in range(len(stops_latlon) - 1):
+                seg_latlon, _, _ = osrm_route_leg(base, stops_latlon[i], stops_latlon[i + 1])  # [[lat,lon],...]
+                seg_lonlat = [[lon, lat] for (lat, lon) in seg_latlon]
+                coords_lonlat.extend(seg_lonlat if not coords_lonlat else seg_lonlat[1:])
+            path_geo = {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords_lonlat},
+                "properties": {"snapped": True, "router": "osrm"},
+            }
+        else:
+            line_lonlat = [[lon, lat] for (lat, lon) in stops_latlon]
+            path_geo = {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": line_lonlat},
+                "properties": {"snapped": False, "router": req.router},
+            }
+
+        # Calculate total distance and time
+        total_time_s = getattr(tour, "total_time_s", 0)
+        leg_times_s = getattr(tour, "leg_times_s", [])
+        
+        # Approximate distance from leg times (assuming walk_speed_mps)
+        total_distance_m = sum(leg_times_s) * float(req.walk_speed_mps) if leg_times_s else 0
+        total_distance_km = round(total_distance_m / 1000.0, 1) if total_distance_m > 0 else 0
+        time_min = round(total_time_s / 60.0) if total_time_s > 0 else 0
+
+        return {
+            "id": strategy_info["name"],
+            "name": strategy_info["name"],
+            "description": strategy_info["description"],
+            "tour": {
+                "site_ids": tour.site_ids,
+                "leg_times_s": leg_times_s,
+                "total_time_s": total_time_s,
+                "stop_score": getattr(tour, "stop_score", 0),
+                "passby_score": getattr(tour, "passby_score", 0.0),
+            },
+            "stops": stops,
+            "path": path_geo,
+            "distance": f"{total_distance_km}",
+            "time": f"{time_min} min",
+            "stops_count": len([s for s in stops if not s.get("is_start") and not s.get("is_end")]),
         }
-    else:
-        line_lonlat = [[lon, lat] for (lat, lon) in stops_latlon]
-        path_geo = {
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": line_lonlat},
-            "properties": {"snapped": False, "router": req.router},
-        }
+
+    # Build route responses for all tours
+    routes = [build_route_response(tour, strategy) for tour, strategy in tours]
 
     # 3) Send structured POIs so Vue can build popups with buildPoiPopup(props)
     pois_data = []
@@ -387,18 +478,10 @@ def _real_build_tour(req: TourRequest):
             "distance_m": int(haversine_m(start[0], start[1], p.lat, p.lon)),
         })
 
-    # Return stops as a simple ordered array (the tour path is visual, POIs layer handles popups)
+    # Return routes as a list
     return {
-        "tour": {
-            "site_ids": tour.site_ids,
-            "leg_times_s": getattr(tour, "leg_times_s", []),
-            "total_time_s": getattr(tour, "total_time_s", 0),
-            "stop_score": getattr(tour, "stop_score", 0),
-            "passby_score": getattr(tour, "passby_score", 0.0),
-        },
-        "stops": stops,
-        "path": path_geo,
-        "pois": pois_data,                 # <— NEW: structured data for Vue popups
+        "routes": routes,
+        "pois": pois_data,  # Shared POI data for all routes
         "roundtrip": roundtrip,
         "time_budget_s": budget_s,
     }
@@ -420,17 +503,43 @@ def _mock_pois(lat: float, lon: float, radius_m: int, cat_weights: Dict[str, flo
     return {"type": "FeatureCollection", "features": features}
 
 def _mock_tour(req: TourRequest):
-    stops = [(req.lat, req.lon),
-             (req.lat + 0.002, req.lon + 0.002),
-             (req.lat + 0.004, req.lon - 0.001),
-             (req.lat + 0.001, req.lon - 0.003)]
+    # Mock 3 routes with slight variations
+    base_stops = [(req.lat, req.lon),
+                  (req.lat + 0.002, req.lon + 0.002),
+                  (req.lat + 0.004, req.lon - 0.001),
+                  (req.lat + 0.001, req.lon - 0.003)]
     if req.roundtrip:
-        stops.append((req.lat, req.lon))
-    line = [[lon, lat] for (lat, lon) in stops]
+        base_stops.append((req.lat, req.lon))
+    
+    routes = []
+    for i in range(3):
+        # Slight variations for each route
+        offset = i * 0.0005
+        stops = [(req.lat + offset, req.lon + offset),
+                 (req.lat + 0.002 + offset, req.lon + 0.002),
+                 (req.lat + 0.004 + offset, req.lon - 0.001),
+                 (req.lat + 0.001, req.lon - 0.003 + offset)]
+        if req.roundtrip:
+            stops.append((req.lat + offset, req.lon + offset))
+        line = [[lon, lat] for (lat, lon) in stops]
+        
+        routes.append({
+            "id": f"mock_{i}",
+            "name": ["balanced", "explore", "efficient"][i],
+            "description": f"Mock route {i + 1}",
+            "tour": {"site_ids": [1, 2, 3], "leg_times_s": [300 + i*10, 420 + i*10, 390 + i*10], "total_time_s": 1200 + i*30, "stop_score": 100 + i*10},
+            "stops": [{"lat": lat, "lon": lon, "is_start": idx == 0, "is_end": idx == len(stops) - 1} for idx, (lat, lon) in enumerate(stops)],
+            "path": {"type": "Feature", "geometry": {"type": "LineString", "coordinates": line}, "properties": {"snapped": False}},
+            "distance": f"{2.5 + i*0.5}",
+            "time": f"{20 + i*2} min",
+            "stops_count": len([s for s in stops if len(stops) > 2])
+        })
+    
     return {
-        "tour": {"site_ids": [1, 2, 3], "leg_times_s": [300, 420, 390], "total_time_s": 1200},
-        "stops": [{"lat": lat, "lon": lon} for (lat, lon) in stops],
-        "path": {"type": "Feature", "geometry": {"type": "LineString", "coordinates": line}, "properties": {"snapped": False}}
+        "routes": routes,
+        "pois": [],
+        "roundtrip": req.roundtrip,
+        "time_budget_s": 1200,
     }
 
 # ---------- Endpoints ----------

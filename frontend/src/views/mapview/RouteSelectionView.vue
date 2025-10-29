@@ -26,7 +26,7 @@
     <div v-if="currentRoute" class="route-stats">
       <div class="stat-item">
         <span class="stat-icon">📍</span>
-        <span class="stat-value">{{ currentRoute.stops?.length || 0 }} stops</span>
+        <span class="stat-value">{{ currentRoute.stops_count ?? (currentRoute.stops?.filter(s => !s.is_start && !s.is_end).length || 0) }} stops</span>
       </div>
       <div class="stat-item">
         <span class="stat-icon">📏</span>
