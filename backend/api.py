@@ -7,6 +7,16 @@ from typing import Optional, Dict
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from Scorer import Scorer
+from app_explore import load_cached_area, haversine_m
+from app_tour import (
+    HaversineRouter,
+    OSRMRouter,
+    simple_greedy_solver,
+    build_sites,
+    feasible_sites_mask,
+    osrm_route_leg,
+)
 
 # Ensure the folder containing api.py is on sys.path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -110,7 +120,9 @@ def _real_load_pois(lat: float, lon: float, radius_m: int, cat_weights: Dict[str
         })
     return {"type": "FeatureCollection", "features": features}
 
-def _real_build_tour(req: TourRequest):
+""" def _real_build_tour(req: TourRequest):
+
+
     Scorer = getattr(Scorer_mod, "Scorer")
     scorer = Scorer(cat_weights=req.cat_weights or {})
     load_cached_area = getattr(app_explore_mod, "load_cached_area")
@@ -201,7 +213,141 @@ def _real_build_tour(req: TourRequest):
         },
         "stops": [{"lat": lat, "lon": lon} for (lat, lon) in stops],
         "path": path_geo
+    } """
+
+def _real_build_tour(req: TourRequest):
+    start = (float(req.lat), float(req.lon))
+    roundtrip = bool(req.roundtrip)
+
+    end = None
+    if not roundtrip and (req.end_lat is not None) and (req.end_lon is not None):
+        end = (float(req.end_lat), float(req.end_lon))
+
+    # Per-request scorer (stateless)
+    #scorer = Scorer(cat_weights=req.cat_weights or {})  #BUT LETS OVERWRITE IT FOR NOW!!!!
+    #
+    scorer = Scorer()
+
+    db_path = (getattr(req, "cache_db", None)
+               or os.getenv("CACHE_DB")
+               or "out/stockholm_wiki.db")
+
+    pois, wiki_views, details_map = load_cached_area(
+        db_path, start[0], start[1], int(req.radius_m), scorer
+    )
+
+    sites = build_sites(pois)
+    site_lookup = {s.id: s for s in sites}
+
+    if req.router == "osrm":
+        base_url = req.router_url or os.getenv("OSRM_URL")
+        if not base_url:
+            raise SystemExit("Please provide --router-url for OSRM, e.g. http://localhost:5000")
+        router = OSRMRouter(base_url)
+    else:
+        router = HaversineRouter(walk_speed_mps=float(req.walk_speed_mps))
+
+    budget_s = int(req.time_min) * 60
+
+    coords = [start] + [(s.lat, s.lon) for s in sites]
+    site_idx_offset = 1
+    end_coord = start if (roundtrip and end is None) else end
+    end_index = None
+    if end_coord is not None:
+        coords.append(end_coord)
+        end_index = len(coords) - 1
+
+    print("BEGINNING TO CALCULATE M")
+    M = router.time_matrix_seconds(coords)
+
+    open_end = (not roundtrip) and (end is None)
+    mask = feasible_sites_mask(
+        start_idx=0,
+        end_idx=end_index,
+        site_idx_offset=site_idx_offset,
+        M=M,
+        budget_s=budget_s,
+        open_end=open_end,
+        n_sites=len(sites),
+    )
+
+    tour = simple_greedy_solver(
+        start=start,
+        end=end,
+        budget_s=budget_s,
+        sites=sites,
+        M=M,
+        site_idx_offset=site_idx_offset,
+        end_index=end_index,
+        roundtrip=roundtrip,
+        candidate_mask=mask,
+        dwell_time_s=int(req.dwell_sec),
+        coords=coords,
+        walk_speed_mps=float(req.walk_speed_mps),
+        backtrack_angle_deg=150.0,
+        backtrack_penalty_per_m=0.15,
+        edge_reuse_penalty_s=20.0,
+    )
+
+    # stops: start -> sites -> [end_coord?]
+    id_to_site = {s.id: s for s in sites}
+    stops_latlon = [start] + [(id_to_site[sid].lat, id_to_site[sid].lon) for sid in tour.site_ids]
+    if end_coord is not None:
+        stops_latlon.append(end_coord)
+
+    # 2) Build snapped or straight path (GeoJSON lon/lat order)
+    if req.router == "osrm" and getattr(req, "snap_path", False):
+        base = req.router_url or os.getenv("OSRM_URL")
+        coords_lonlat = []
+        for i in range(len(stops_latlon) - 1):
+            seg_latlon, _, _ = osrm_route_leg(base, stops_latlon[i], stops_latlon[i + 1])  # [[lat,lon],...]
+            seg_lonlat = [[lon, lat] for (lat, lon) in seg_latlon]
+            coords_lonlat.extend(seg_lonlat if not coords_lonlat else seg_lonlat[1:])
+        path_geo = {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords_lonlat},
+            "properties": {"snapped": True, "router": "osrm"},
+        }
+    else:
+        line_lonlat = [[lon, lat] for (lat, lon) in stops_latlon]
+        path_geo = {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": line_lonlat},
+            "properties": {"snapped": False, "router": req.router},
+        }
+
+    # 3) Send structured POIs so Vue can build popups with buildPoiPopup(props)
+    pois_data = []
+    for p in pois:
+        pois_data.append({
+            "xid": p.xid,
+            "name": p.name,
+            "lat": p.lat,
+            "lon": p.lon,
+            "kinds": getattr(p, "kinds", []),
+            "raw_rate": getattr(p, "raw_rate", None),
+            "score": getattr(p, "score", None),
+            "det": details_map.get(p.xid),   # OTM details (addr, extracts, urls)
+            "wv": wiki_views.get(p.xid),     # Wikipedia info (title, project, views_365)
+            "distance_m": int(haversine_m(start[0], start[1], p.lat, p.lon)),
+        })
+
+    # Return stops as a simple ordered array (the tour path is visual, POIs layer handles popups)
+    return {
+        "tour": {
+            "site_ids": tour.site_ids,
+            "leg_times_s": getattr(tour, "leg_times_s", []),
+            "total_time_s": getattr(tour, "total_time_s", 0),
+            "stop_score": getattr(tour, "stop_score", 0),
+            "passby_score": getattr(tour, "passby_score", 0.0),
+        },
+        "stops": [{"lat": lat, "lon": lon} for (lat, lon) in stops_latlon],
+        "path": path_geo,
+        "pois": pois_data,                 # <— NEW: structured data for Vue popups
+        "roundtrip": roundtrip,
+        "time_budget_s": budget_s,
     }
+
 
 # ---------- Mock helpers ----------
 def _mock_pois(lat: float, lon: float, radius_m: int, cat_weights: Dict[str, float]):

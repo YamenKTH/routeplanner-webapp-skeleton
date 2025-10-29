@@ -40,8 +40,24 @@
             </label>
           </div>
 
+          <!-- Confirm selected endpoint (shown only when in End mode and a map tap exists) -->
+        <div v-if="tripMode==='end' && candidateEnd" class="cardish compact">
+          <div style="font-weight:800; margin-bottom:6px;">Destination selected</div>
+          <div style="font-size:.85rem; opacity:.9; margin-bottom:8px;">
+            {{ candidateEnd.lat.toFixed(5) }}, {{ candidateEnd.lng.toFixed(5) }}
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="chk-pill small as-button full" @click="confirmEnd">
+              Use as End Point
+            </button>
+            <button type="button" class="chk-pill small as-button full" @click="cancelCandidate">
+              Cancel
+            </button>
+          </div>
+        </div>
+
           <!-- Generate -->
-          <button class="generate-btn" @click="generateRoute" :disabled="isGenerating">
+          <button class="generate-btn" @click="generateRoute" :disabled="isGenerating || !canGenerate">
             <span class="btn-icon" :class="{ spinning: isGenerating }">▶️</span>
             {{ isGenerating ? "Building..." : "Generate Route" }}
           </button>
@@ -88,6 +104,8 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import { useScorer } from '../composables/useScorer.js'
+const { catWeights } = useScorer()
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || "/api" });
 
@@ -101,8 +119,8 @@ const isGenerating = ref(false);
 
 let map, origin, circle, poiCluster, tourLayer;
 let endMarker = null;
-let endLat = null;
-let endLon = null;
+const endLat = ref(null);
+const endLon = ref(null);
 window._stopMarkers = [];
 
 /* ---------------- bottom sheet ---------------- */
@@ -113,6 +131,14 @@ const STEP_TRIGGER_PX = 28;
 
 const dragging = ref(false);
 let dragStartY = 0, lastY = 0, dragStartTranslate = STATE_POS[sheetState.value], dragTranslate = STATE_POS[sheetState.value];
+
+const candidateEnd = ref(null); // { lat, lng } from the last tap while in "End Position"
+let tempEndMarker = null;       // preview marker before confirm
+
+const canGenerate = computed(() => {
+  if (tripMode.value === "round") return true;
+  return endLat !== null && endLon !== null; // only after confirm
+});
 
 const sheetStyle = computed(() => ({
   transform: `translateY(${dragging.value ? dragTranslate : STATE_POS[sheetState.value]}%)`,
@@ -160,6 +186,25 @@ function onPointerUp() {
   window.removeEventListener("pointerup", onPointerUp);
   window.removeEventListener("touchmove", onPointerMove);
   window.removeEventListener("touchend", onPointerUp);
+}
+
+function confirmEnd() {
+  if (!candidateEnd.value) return;
+  endLat = candidateEnd.value.lat;
+  endLon = candidateEnd.value.lng;
+
+  // Commit to a permanent end marker
+  if (endMarker) endMarker.remove();
+  endMarker = L.marker([endLat, endLon], { icon: endIcon }).addTo(map);
+
+  // Clear preview state
+  candidateEnd.value = null;
+  if (tempEndMarker) { tempEndMarker.remove(); tempEndMarker = null; }
+}
+
+function cancelCandidate() {
+  candidateEnd.value = null;
+  if (tempEndMarker) { tempEndMarker.remove(); tempEndMarker = null; }
 }
 
 /* ---------------- marker icons ---------------- */
@@ -235,7 +280,7 @@ function buildPoiPopup(props) {
 
 /* ---------------- API: Load POIs ---------------- */
 async function loadPois() {
-  const payload = { lat: lat.value, lon: lon.value, radius_m: radius.value, cat_weights: {} };
+  const payload = { lat: lat.value, lon: lon.value, radius_m: radius.value, cat_weights: { ...catWeights.value }, };
   const { data } = await api.post("/api/pois", payload);
 
   if (poiCluster) poiCluster.remove();
@@ -259,46 +304,87 @@ async function loadPois() {
 
 /* ---------------- API: Build Tour ---------------- */
 async function buildTour() {
-  const payload = {
-    lat: lat.value, lon: lon.value,
-    time_min: timeMin.value, radius_m: radius.value,
-    roundtrip: tripMode.value === "round",
-    end_lat: tripMode.value === "end" ? endLat : null,
-    end_lon: tripMode.value === "end" ? endLon : null,
-    router: "osrm", router_url: "http://osrm:5000", snap_path: true,
-  };
+  try {
+    if (!window._stopMarkers) window._stopMarkers = [];
 
-  const { data } = await api.post("/api/tour", payload);
+    const isRound = tripMode.value === "round";
+    const isEnd   = tripMode.value === "end";
 
-  if (tourLayer) tourLayer.remove();
-  window._stopMarkers.forEach((m) => m.remove());
-  window._stopMarkers = [];
+    const payload = {
+      lat: Number(lat.value),
+      lon: Number(lon.value),
+      time_min: Number(timeMin.value),
+      radius_m: Number(radius.value),
+      roundtrip: isRound,
+      end_lat: isEnd ? Number(endLat.value) : null,   
+      end_lon: isEnd ? Number(endLon.value) : null,   
+      router: "osrm",
+      router_url: "http://osrm:5000",       
+      snap_path: true,
+      cat_weights: { ...catWeights.value },
+    };
 
-  tourLayer = L.geoJSON(data.path, { style: { color: "#C42DE3", weight: 3.5, opacity: 1 } }).addTo(map);
+    const { data } = await api.post("/api/tour", payload);
 
-  const stops = data.stops || [];
-  stops.forEach((s, idx) => {
-    if (idx === 0) {
-      origin.setLatLng([s.lat, s.lon]);
-    } else if (idx === stops.length - 1) {
-      if (endMarker) endMarker.remove();
-      endMarker = L.marker([s.lat, s.lon], { icon: endIcon, draggable: true }).addTo(map);
-      endMarker.on("dragend", async (e) => {
-        const c = e.target.getLatLng();
-        endLat = c.lat; endLon = c.lng;
-        await buildTour();
-      });
-      window._stopMarkers.push(endMarker);
-    } else {
-      const m = L.marker([s.lat, s.lon], { icon: midIcon }).addTo(map);
-      window._stopMarkers.push(m);
+    if (tourLayer) tourLayer.remove();
+    window._stopMarkers.forEach((m) => m.remove());
+    window._stopMarkers = [];
+
+    if (data?.path) {
+      tourLayer = L.geoJSON(data.path, {
+        style: { color: "#C42DE3", weight: 3.5, opacity: 1 }
+      }).addTo(map);
     }
-  });
 
-  const b = tourLayer.getBounds();
-  if (b.isValid()) map.fitBounds(b, { padding: [20, 20] });
+    const stops = Array.isArray(data?.stops) ? data.stops : [];
+    stops.forEach((s, idx) => {
+      const latlng = [s.lat, s.lon];
 
-  sheetState.value = "peek";
+      if (idx === 0) {
+        origin.setLatLng(latlng);
+        return;
+      }
+
+      const isLast = idx === stops.length - 1;
+
+      // Only show an end marker if user chose explicit end mode
+      if (isEnd) {
+        if (endMarker) endMarker.remove();
+        endMarker = L.marker(latlng, { icon: endIcon, draggable: true }).addTo(map);
+        endMarker.on("dragend", async (e) => {
+          const c = e.target.getLatLng();
+          endLat.value = c.lat;                
+          endLon.value = c.lng;               
+          await buildTour();
+        });
+        window._stopMarkers.push(endMarker);
+        return;
+      }
+
+      // Intermediate POIs
+      if (!isLast){
+        const m = L.marker(latlng, { icon: midIcon }).addTo(map); 
+      }
+      // const m = L.marker(latlng, { icon: midIcon }).addTo(map); 
+
+      
+      window._stopMarkers.push(m);
+    });
+
+    // Fit bounds safely
+    if (tourLayer) {
+      const b = tourLayer.getBounds();
+      if (b && b.isValid()) map.fitBounds(b, { padding: [20, 20] });
+    } else if (stops.length) {
+      const bounds = L.latLngBounds(stops.map(p => [p.lat, p.lon]));
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [20, 20] });
+    }
+
+    sheetState.value = "peek";
+  } catch (err) {
+    console.error("Failed to build tour:", err);
+    // TODO: toast/snackbar
+  }
 }
 
 /* ---------------- route button ---------------- */
@@ -309,6 +395,25 @@ async function generateRoute() {
 }
 
 /* ---------------- map setup ---------------- */
+function onMapClick(e) {
+  // Only handle taps when user selected "End Position"
+  if (tripMode.value !== "end") return;
+
+  const { lat: clat, lng: clng } = e.latlng;
+
+  // Store candidate and show a temporary marker (non-draggable)
+  candidateEnd.value = { lat: clat, lng: clng };
+
+  if (!tempEndMarker) {
+    tempEndMarker = L.marker([clat, clng], { icon: endIcon }).addTo(map);
+  } else {
+    tempEndMarker.setLatLng([clat, clng]);
+  }
+
+  // Bring the sheet up a bit so the confirm UI is visible
+  sheetState.value = "mid";
+}
+
 onMounted(() => {
   const el = document.getElementById("map");
   if (el) el.style.height = "100%";
@@ -328,6 +433,7 @@ onMounted(() => {
 
   circle = L.circle([lat.value, lon.value], { radius: radius.value, fillOpacity: 0.15 , color: "#1BB9F5", weight: 2.9 }).addTo(map);
   loadPois();
+  map.on("click", onMapClick);
 });
 
 onBeforeUnmount(() => {
@@ -340,6 +446,17 @@ onBeforeUnmount(() => {
 watch(radius, (v) => {
   if (circle) { circle.setRadius(v); loadPois(); }
 });
+
+watch(tripMode, (v) => {
+  if (v === "round") {
+    // Clear any preview or committed endpoint when switching back to round-trip
+    candidateEnd.value = null;
+    if (tempEndMarker) { tempEndMarker.remove(); tempEndMarker = null; }
+    if (endMarker) { endMarker.remove(); endMarker = null; }
+    endLat = endLon = null;
+  }
+});
+
 </script>
 
 <style>
