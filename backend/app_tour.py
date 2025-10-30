@@ -755,6 +755,87 @@ def osrm_route_leg(base_url: str, a: Tuple[float, float], b: Tuple[float, float]
     return coords_latlon, dist, dur
 
 
+def osrm_route_leg_detailed(base_url: str, a: Tuple[float, float], b: Tuple[float, float]):
+    """
+    Call /route/v1/foot with steps=true to get detailed navigation info.
+    Returns dict with:
+    - coords_latlon: List of [lat, lon] coordinates
+    - distance_m: total distance in meters
+    - duration_s: total duration in seconds
+    - steps: List of step dicts with {distance_m, duration_s, street_name, maneuver}
+    - next_street_name: name of the first street segment (for navigation display)
+    """
+    import requests
+    base = base_url.rstrip("/")
+    lonlat = f"{a[1]:.6f},{a[0]:.6f};{b[1]:.6f},{b[0]:.6f}"
+    url = f"{base}/route/v1/foot/{lonlat}"
+    params = {
+        "overview": "full",
+        "geometries": "geojson",
+        "steps": "true",  # Get step-by-step instructions
+        "continue_straight": "true"
+    }
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        js = r.json()
+        routes = js.get("routes", [])
+        if not routes:
+            return {
+                "coords_latlon": [[a[0], a[1]], [b[0], b[1]]],
+                "distance_m": float("nan"),
+                "duration_s": float("nan"),
+                "steps": [],
+                "next_street_name": None,
+            }
+        r0 = routes[0]
+        geom = r0.get("geometry", {})
+        coords_lonlat = geom.get("coordinates", [])
+        coords_latlon = [[ll[1], ll[0]] for ll in coords_lonlat]
+        dist = float(r0.get("distance", 0.0))
+        dur = float(r0.get("duration", 0.0))
+        
+        # Extract steps with maneuver types and modifiers (OSRM doesn't reliably provide street names)
+        legs = r0.get("legs", [])
+        steps = []
+        if legs:
+            leg0 = legs[0]
+            leg_steps = leg0.get("steps", [])
+            for step in leg_steps:
+                step_dist = float(step.get("distance", 0.0))
+                step_dur = float(step.get("duration", 0.0))
+                maneuver = step.get("maneuver", {})
+                maneuver_type = maneuver.get("type", "")
+                maneuver_modifier = maneuver.get("modifier", "")  # e.g., "left", "right", "sharp left", "slight right"
+                # Combine type and modifier for better turn detection
+                # Format: "type:modifier" or just "type" if no modifier
+                maneuver_str = maneuver_type
+                if maneuver_modifier:
+                    maneuver_str = f"{maneuver_type}:{maneuver_modifier}"
+                steps.append({
+                    "distance_m": step_dist,
+                    "duration_s": step_dur,
+                    "maneuver": maneuver_str,
+                })
+        
+        return {
+            "coords_latlon": coords_latlon,
+            "distance_m": dist,
+            "duration_s": dur,
+            "steps": steps,
+            "next_street_name": None,  # OSRM typically doesn't provide reliable street names
+        }
+    except Exception as e:
+        print(f"[OSRM] detailed route failed: {e}")
+        return {
+            "coords_latlon": [[a[0], a[1]], [b[0], b[1]]],
+            "distance_m": float("nan"),
+            "duration_s": float("nan"),
+            "steps": [],
+            "next_street_name": None,
+        }
+
+
 #------------------------------------------------------------------------------
 # CLI
 

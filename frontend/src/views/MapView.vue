@@ -2,13 +2,70 @@
   <div id="map-container">
     <div id="map"></div>
 
-    <!-- Mode Toggle Button -->
-    <div class="mode-toggle">
-      <button class="mode-btn" @click="toggleMode">
-        {{ isRoutePlanningMode ? '📍 View Route' : '🗺️ Plan New Route' }}
+    <!-- Navigation Banner (Google Maps style) -->
+    <div v-if="confirmedRoute && !isRoutePlanningMode && currentNavInfo && currentNavInfo.distance_m" class="nav-banner">
+      <!-- Show deviation warning if off-route -->
+      <div v-if="currentNavInfo.isOffRoute" class="nav-deviation-warning">
+        <div class="nav-deviation-icon">⚠️</div>
+        <div class="nav-deviation-text">
+          <div class="nav-deviation-title">Off Route</div>
+          <div class="nav-deviation-distance">{{ formatDistance(currentNavInfo.deviationFromRoute) }} from route</div>
+        </div>
+      </div>
+      
+      <div class="nav-banner-content">
+        <!-- Prioritize turn instruction when close (within 300m) -->
+        <template v-if="currentNavInfo.nextTurn && !currentNavInfo.isOffRoute && currentNavInfo.nextTurn.distance_m <= 300">
+          <div class="nav-turn-main">
+            <div class="nav-turn-instruction-text">
+              {{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}
+            </div>
+            <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking</div>
+          </div>
+          <div class="nav-to-destination">
+            <span class="nav-destination-label">Total distance to {{ currentNavInfo.nextStopName }}:</span>
+            <span class="nav-destination-distance">{{ formatDistance(currentNavInfo.distance_m) }}</span>
+          </div>
+        </template>
+        
+        <!-- Otherwise show distance to POI as primary -->
+        <template v-else>
+          <div class="nav-distance-main">
+            <div class="nav-distance" :class="{ 'off-route-distance': currentNavInfo.isOffRoute }">{{ formatDistance(currentNavInfo.distance_m) }}</div>
+            <div class="nav-destination">{{ currentNavInfo.nextStopName }}</div>
+            <div v-if="currentNavInfo.time_s" class="nav-time">{{ formatTime(currentNavInfo.time_s) }} walking</div>
+          </div>
+          <!-- Show upcoming turn as secondary info if available -->
+          <div v-if="currentNavInfo.nextTurn && !currentNavInfo.isOffRoute" class="nav-turn-upcoming">
+            <div class="nav-turn-instruction-text">{{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}</div>
+            <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking</div>
+          </div>
+        </template>
+        
+        <!-- Manual Mode Indicator -->
+        <div v-if="isManualMode" class="nav-manual-mode-indicator">
+          <span class="manual-mode-icon">✋</span>
+          <span class="manual-mode-text">Manual mode - drag marker to simulate</span>
+          <button class="manual-mode-reset-btn" @click="resetToGPSLocation">Use GPS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Location Buttons -->
+    <div class="location-buttons">
+      <button class="location-btn" @click="useMyLocation" title="My Location">
+        📡
+        <span class="location-btn-tooltip">My Location</span>
       </button>
-      <button class="mode-btn" style="margin-left:8px; background:linear-gradient(135deg,#00c6ff 0%, #0072ff 100%);" @click="useMyLocation">
-        📡 My location
+      <button v-if="confirmedRoute && !isRoutePlanningMode && currentLocationMarker" 
+              class="location-btn" 
+              :class="{ 'loading': isResettingGPS }"
+              @click="resetToGPSLocation"
+              :disabled="isResettingGPS"
+              title="Reset to GPS">
+        <span v-if="isResettingGPS" class="spinner">⏳</span>
+        <span v-else>🔄</span>
+        <span class="location-btn-tooltip">Reset to GPS</span>
       </button>
     </div>
 
@@ -46,6 +103,11 @@
               <button class="nav-btn" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">Next ➡️</button>
             </div>
           </div>
+          
+          <!-- Cancel Navigation Button -->
+          <button class="cancel-nav-btn" @click="cancelNavigation">
+            Cancel Navigation
+          </button>
         </div>
         
         <!-- POI DETAILS VIEW (opens when a map marker is clicked) -->
@@ -151,6 +213,9 @@
               </button>
             </div>
             <button class="confirm-route-btn" @click="confirmRoute">Confirm This Route</button>
+            <button class="generate-new-route-btn" @click="goBackToPlanning">
+              ↻ Generate New Route
+            </button>
           </div>
 
           <!-- Route information -->
@@ -314,6 +379,8 @@ const endLat = ref(null);
 const endLon = ref(null);
 
 let map, origin, circle, poiCluster, tourLayer;
+let currentLegLayer = null; // Highlighted layer for current leg to next POI
+let deviationLineLayer = null; // Line from user position to nearest route point when off-route
 let endMarker = null;
 const candidateEnd = ref(null);
 let tempEndMarker = null;
@@ -321,6 +388,14 @@ window._stopMarkers = [];
 
 // Track route POIs to avoid duplicates
 let routePoiMarkers = [];
+
+// Live navigation tracking
+let geoWatchId = null;
+let currentLocationMarker = null;
+const isManualMode = ref(false); // Flag to pause GPS updates when manually dragging
+const currentGPSPosition = ref(null); // Track current GPS position [lat, lon]
+const currentNavLegIndex = ref(0); // Track which navigation leg we're currently on (starts at 0)
+const isResettingGPS = ref(false); // Loading state for reset GPS button
 
 /* ---------------- computed properties ---------------- */
 const canGenerate = computed(() => {
@@ -346,6 +421,258 @@ const currentPoiDetails = computed(() => {
     description: stop.description || 'No description available'
   };
 });
+
+// Haversine distance calculation (in meters)
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000; // Earth radius in meters
+  const phi1 = lat1 * Math.PI / 180;
+  const phi2 = lat2 * Math.PI / 180;
+  const dPhi = (lat2 - lat1) * Math.PI / 180;
+  const dLambda = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dPhi / 2) * Math.sin(dPhi / 2) +
+            Math.cos(phi1) * Math.cos(phi2) *
+            Math.sin(dLambda / 2) * Math.sin(dLambda / 2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+const currentNavInfo = computed(() => {
+  if (!confirmedRoute.value || isRoutePlanningMode.value || !currentGPSPosition.value) return null;
+  
+  const stops = confirmedRoute.value.stops || [];
+  const navLegs = confirmedRoute.value.navigation_legs || [];
+  
+  if (stops.length === 0 || navLegs.length === 0) return null;
+  
+  // Ensure currentNavLegIndex is within valid range
+  const legIndex = Math.max(0, Math.min(currentNavLegIndex.value, navLegs.length - 1));
+  
+  // Get the leg information
+  const leg = navLegs[legIndex];
+  if (!leg) return null;
+  
+  const [currentLat, currentLon] = currentGPSPosition.value;
+  
+  const nextStopIndex = legIndex + 1;
+  const nextStop = stops[nextStopIndex];
+  const nextStopName = nextStop?.name || `Stop ${nextStopIndex + 1}`;
+  
+  // Find the closest point on the leg's path to user's current position
+  // and detect deviation from route
+  let minDistToPath = Infinity;
+  let closestPointIndex = 0;
+  let traveledDistance = 0;
+  let deviationFromRoute = 0;
+  const DEVIATION_THRESHOLD = 50; // meters - consider "on route" if within this
+  
+  if (leg.coords_latlon && leg.coords_latlon.length > 0) {
+    // Find closest point on route path
+    for (let i = 0; i < leg.coords_latlon.length; i++) {
+      const [pathLat, pathLon] = leg.coords_latlon[i];
+      const distToPoint = haversineDistance(currentLat, currentLon, pathLat, pathLon);
+      if (distToPoint < minDistToPath) {
+        minDistToPath = distToPoint;
+        closestPointIndex = i;
+      }
+    }
+    
+    deviationFromRoute = minDistToPath; // Distance in meters from route
+    
+    // Calculate distance along path from start to closest point
+    for (let i = 1; i <= closestPointIndex && i < leg.coords_latlon.length; i++) {
+      const [lat1, lon1] = leg.coords_latlon[i - 1];
+      const [lat2, lon2] = leg.coords_latlon[i];
+      traveledDistance += haversineDistance(lat1, lon1, lat2, lon2);
+    }
+  }
+  
+  // Store closest point on route for visual indicator
+  let nearestRoutePoint = null;
+  if (leg.coords_latlon && leg.coords_latlon.length > 0 && closestPointIndex < leg.coords_latlon.length) {
+    nearestRoutePoint = leg.coords_latlon[closestPointIndex];
+  }
+  
+  // Calculate remaining distance to next stop
+  // If on-route (within threshold), use route-based distance; otherwise use direct distance
+  let remainingDistance = leg.distance_m;
+  
+  if (leg.coords_latlon && leg.coords_latlon.length > 0 && nextStop) {
+    if (deviationFromRoute <= DEVIATION_THRESHOLD) {
+      // On route: calculate remaining distance along route
+      let remainingRouteDistance = leg.distance_m - traveledDistance;
+      // Cap at direct distance * 1.3 to prevent unrealistic values
+      const directDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
+      remainingDistance = Math.max(0, Math.min(remainingRouteDistance, directDistance * 1.3));
+    } else {
+      // Off route: use direct distance (you're not on the planned path)
+      remainingDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
+    }
+  } else if (nextStop) {
+    // Fallback: use direct distance if no route coordinates
+    remainingDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
+  }
+  
+  // Find the next turn/step based on user's position
+  let nextTurn = null;
+  let distanceToTurn = null;
+  
+  if (leg.steps && leg.steps.length > 0 && leg.coords_latlon && leg.coords_latlon.length > 0) {
+    // Calculate cumulative distance from start of leg
+    let cumulativeDistance = 0;
+    
+    // Find the next turn step
+    for (let stepIndex = 0; stepIndex < leg.steps.length; stepIndex++) {
+      const step = leg.steps[stepIndex];
+      cumulativeDistance += step.distance_m;
+      
+      // If we haven't reached this step yet, and it's a turn
+      // Only show turns when on-route (within threshold) to avoid confusing instructions
+      if (cumulativeDistance > traveledDistance && step.maneuver && deviationFromRoute <= DEVIATION_THRESHOLD) {
+        // Maneuver can be "type:modifier" format from backend (e.g., "turn:left", "new name:", "roundabout:left")
+        const maneuverStr = typeof step.maneuver === 'string' 
+          ? step.maneuver.toLowerCase() 
+          : String(step.maneuver).toLowerCase();
+        
+        // Split into type and modifier if format is "type:modifier"
+        const [maneuverType, maneuverModifier = ''] = maneuverStr.includes(':') 
+          ? maneuverStr.split(':')
+          : [maneuverStr, ''];
+        
+        const modifier = maneuverModifier.trim();
+        const maneuver = maneuverType; // Use just the type for checking
+        
+        // Check if it's a significant turn (not just continue straight)
+        // OSRM maneuver types: 'turn', 'new name', 'continue', 'ramp', 'roundabout', etc.
+        const isSignificantTurn = maneuver !== 'new name' && 
+          maneuver !== 'continue' && 
+          maneuver !== 'straight' &&
+          !maneuver.includes('depart') &&
+          !maneuver.includes('arrive');
+        
+        // Check for left/right in both modifier and full string
+        const hasLeft = modifier.includes('left') || maneuverStr.includes('left');
+        const hasRight = modifier.includes('right') || maneuverStr.includes('right');
+        const hasUtturn = modifier.includes('uturn') || modifier.includes('u-turn') || maneuverStr.includes('uturn');
+        
+        if (isSignificantTurn || hasLeft || hasRight || maneuver.includes('turn') ||
+            hasUtturn || maneuver.includes('merge') || maneuver.includes('ramp') || 
+            maneuver.includes('roundabout')) {
+          
+          // Calculate distance to this turn
+          distanceToTurn = cumulativeDistance - traveledDistance;
+          
+          // Format turn direction - prioritize modifier, then check type
+          let turnDirection = 'Turn';
+          
+          // Use modifier first (most specific), then fall back to parsing type
+          // NOTE: Reversed left/right because OSRM directions appear reversed on map from user's POV
+          if (hasLeft && !hasRight) {
+            if (modifier.includes('sharp') || maneuverStr.includes('sharp')) {
+              turnDirection = 'Sharp right';
+            } else if (modifier.includes('slight') || maneuverStr.includes('slight')) {
+              turnDirection = 'Slight right';
+            } else {
+              turnDirection = 'Turn right';
+            }
+          } else if (hasRight && !hasLeft) {
+            if (modifier.includes('sharp') || maneuverStr.includes('sharp')) {
+              turnDirection = 'Sharp left';
+            } else if (modifier.includes('slight') || maneuverStr.includes('slight')) {
+              turnDirection = 'Slight left';
+            } else {
+              turnDirection = 'Turn left';
+            }
+          } else if (hasUtturn) {
+            turnDirection = 'Make U-turn';
+          } else if (maneuver.includes('roundabout')) {
+            turnDirection = 'Enter roundabout';
+          } else if (maneuver.includes('merge')) {
+            turnDirection = 'Merge';
+          } else if (maneuver.includes('ramp')) {
+            turnDirection = 'Take ramp';
+          } else if (maneuver.includes('turn')) {
+            // Generic turn without direction specified
+            turnDirection = 'Turn';
+          }
+          
+          // Only add if it's a meaningful turn (not continue straight)
+          if (turnDirection !== 'Turn' || (!maneuver.includes('straight') && !maneuver.includes('continue'))) {
+            nextTurn = {
+              direction: turnDirection,
+              distance_m: Math.round(distanceToTurn),
+            };
+            break; // Found next turn, stop looking
+          }
+        }
+      }
+    }
+  }
+  
+  // Calculate time to next stop
+  // Prefer OSRM's actual walking time (accounts for route complexity, elevation, etc.)
+  // Fall back to distance/speed estimate if OSRM data not available
+  let timeToNextStop;
+  
+  if (leg.duration_s && leg.distance_m && leg.distance_m > 0) {
+    // Use OSRM's actual walking time, proportional to remaining distance
+    const progressRatio = 1 - (remainingDistance / leg.distance_m);
+    const elapsedTime = leg.duration_s * Math.max(0, Math.min(1, progressRatio));
+    timeToNextStop = Math.round(Math.max(0, leg.duration_s - elapsedTime));
+  } else {
+    // Fallback: fixed walking speed (1.35 m/s = ~4.86 km/h)
+    const walkingSpeedMps = 1.35;
+    timeToNextStop = Math.round(remainingDistance / walkingSpeedMps);
+  }
+  
+  // Add time to next turn if we have turn info
+  if (nextTurn && nextTurn.distance_m) {
+    // Use OSRM's average speed for the leg (more accurate than fixed speed)
+    if (leg.duration_s && leg.distance_m && leg.distance_m > 0) {
+      const avgSpeedMps = leg.distance_m / leg.duration_s;
+      nextTurn.time_s = Math.round(nextTurn.distance_m / avgSpeedMps);
+    } else {
+      // Fallback: fixed walking speed (1.35 m/s = ~4.86 km/h)
+      const walkingSpeedMps = 1.35;
+      nextTurn.time_s = Math.round(nextTurn.distance_m / walkingSpeedMps);
+    }
+  }
+  
+  return {
+    legIndex: legIndex, // Include leg index for highlighting
+    distance_m: Math.max(0, Math.round(remainingDistance)),
+    next_street_name: leg.next_street_name || 'Continue straight',
+    nextStopName,
+    duration_s: leg.duration_s,
+    time_s: timeToNextStop, // Time in seconds to reach next stop
+    nextTurn: nextTurn, // Turn information
+    deviationFromRoute: Math.round(deviationFromRoute), // Distance in meters from route path
+    isOffRoute: deviationFromRoute > DEVIATION_THRESHOLD, // True if significantly off-route
+    nearestRoutePoint: nearestRoutePoint, // [lat, lon] of nearest point on route (for visual indicator)
+  };
+});
+
+function formatDistance(meters) {
+  if (meters === null || meters === undefined || isNaN(meters)) return '';
+  // Always show at least "0 m" if we have a valid number (including 0)
+  if (meters < 1000) {
+    return `${Math.round(meters)} m`;
+  }
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return '';
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (minutes < 60) {
+    return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
 
 /* ---------------- bottom sheet ---------------- */
 const STATES = ["peek", "mid", "expanded"];
@@ -513,9 +840,33 @@ function toggleMode() {
     // When switching back to planning mode, keep the route displayed but allow modifications
     displayRoute(confirmedRoute.value);
     selectedEndStart.value = false;  //From oliver
+    stopNavigationTracking();
   } else if (confirmedRoute.value) {
     // When switching to navigation mode, focus on current POI
     zoomToCurrentPoi();
+    startNavigationTracking();
+  }
+}
+
+function cancelNavigation() {
+  selectedPoi.value = null;
+  isRoutePlanningMode.value = true;
+  if (confirmedRoute.value) {
+    displayRoute(confirmedRoute.value);
+    selectedEndStart.value = false;
+  }
+  stopNavigationTracking();
+}
+
+function goBackToPlanning() {
+  selectedPoi.value = null;
+  selectedEndStart.value = false; // Go back to planning view
+  // Stop any navigation tracking if active
+  stopNavigationTracking();
+  // Reset navigation state
+  if (confirmedRoute.value) {
+    isRoutePlanningMode.value = true;
+    displayRoute(confirmedRoute.value);
   }
 }
 
@@ -572,6 +923,11 @@ function useMyLocation() {
 const startIcon = L.icon({
   iconUrl: new URL("/src/icons/StartMarker.png", import.meta.url).href,
   iconSize: [40, 40],
+});
+
+const currentLocationIcon = L.icon({
+  iconUrl: new URL("/src/icons/StartMarkerOld.png", import.meta.url).href,
+  iconSize: [34, 34],
 });
 
 const midIcon = L.icon({
@@ -763,10 +1119,14 @@ window.setAsEndFromPopup = (lat, lon) => {
   setAsEnd(lat, lon);
 };
 
-function setAsStart(lat, lon) {
-  // Update the start position
-  origin.setLatLng([lat, lon]);
-  circle.setLatLng([lat, lon]);
+function setAsStart(newLat, newLon) {
+  // Update the reactive values that are used for route generation
+  lat.value = newLat;
+  lon.value = newLon;
+  
+  // Update the start position markers
+  origin.setLatLng([newLat, newLon]);
+  circle.setLatLng([newLat, newLon]);
   
   // Show feedback
   toast("✅ Start position updated!");
@@ -778,17 +1138,17 @@ function setAsStart(lat, lon) {
   loadPois();
 }
 
-function setAsEnd(lat, lon) {
+function setAsEnd(newLat, newLon) {
   if (tripMode.value !== "end") {
     tripMode.value = "end";
   }
   
-  // Set end position
-  endLat.value = lat;
-  endLon.value = lon;
+  // Set end position (the reactive values used for route generation)
+  endLat.value = newLat;
+  endLon.value = newLon;
   endPositionSelected.value = true;
   
-  // Update or create end marker
+  // Update or create end marker on the map
   if (endMarker) endMarker.remove();
   endMarker = L.marker([endLat.value, endLon.value], { icon: endIcon }).addTo(map);
   
@@ -820,6 +1180,9 @@ function onMapClick(e) {
 
   // Don't show coordinate popup during route selection
   if (selectedEndStart.value) return;
+
+  // Don't show coordinate popup during navigation mode
+  if (!isRoutePlanningMode.value) return;
 
   const { lat: clat, lng: clng } = e.latlng;
   const popupContent = buildPoiPopup({ lat: clat, lon: clng }, true);
@@ -913,26 +1276,77 @@ function confirmRoute() {
   selectedPoi.value = null; 
   confirmedRoute.value = generatedRoutes.value[currentRouteIndex.value];
   currentPoiIndex.value = 0;
+  currentNavLegIndex.value = 0; // Reset navigation leg index to start with first leg
   isRoutePlanningMode.value = false;
   selectedEndStart.value = false; // THIS ONE, OLIVER WANTED TO REMOVE, NOT SURE WHY
   updateRoutePoiMarkers();
-  zoomToCurrentPoi();
   sheetState.value = "mid";
+  
+  // Start navigation from the route's start position (which may be manually selected)
+  // This respects the user's manually selected start position instead of always using GPS
+  const firstStop = confirmedRoute.value?.stops?.[0];
+  if (firstStop) {
+    // Use the route's start position (matches lat.value and lon.value used to generate route)
+    const startPos = [firstStop.lat, firstStop.lon];
+    currentGPSPosition.value = startPos;
+    
+    // Create the current location marker at the start position
+    if (!currentLocationMarker) {
+      currentLocationMarker = L.marker(startPos, { 
+        icon: currentLocationIcon, 
+        zIndexOffset: 1000,
+        draggable: true
+      }).addTo(map);
+      
+      // Set up drag handlers
+      currentLocationMarker.on('dragstart', () => {
+        isManualMode.value = true;
+      });
+      
+      currentLocationMarker.on('drag', (e) => {
+        const pos = e.target.getLatLng();
+        currentGPSPosition.value = [pos.lat, pos.lng];
+        if (!isRoutePlanningMode.value && map) {
+          const z = map.getZoom?.() || 0;
+          if (z < 17) map.setView(pos, 17); else map.panTo(pos);
+        }
+      });
+      
+      currentLocationMarker.on('dragend', (e) => {
+        const pos = e.target.getLatLng();
+        currentGPSPosition.value = [pos.lat, pos.lng];
+        if (!isRoutePlanningMode.value && map) {
+          map.panTo(pos);
+        }
+      });
+    } else {
+      currentLocationMarker.setLatLng(startPos);
+    }
+    
+    // Center map on the start position
+    if (map) map.setView(startPos, 17);
+    
+    // Start in manual mode to preserve the manually set start position
+    // GPS tracking will start but won't override until user clicks "Reset to GPS"
+    isManualMode.value = true;
+  }
+  
+  // Start GPS tracking (but it won't update position while in manual mode)
+  // User must click "Reset to GPS" to enable GPS tracking
+  startNavigationTracking();
 }
 
 function prevPoi() {
   if (currentPoiIndex.value > 0) {
     currentPoiIndex.value--;
-    updateRoutePoiMarkers();
-    zoomToCurrentPoi();
+    // updateRoutePoiMarkers() and zoomToCurrentPoi() are handled by the watcher
   }
 }
 
 function nextPoi() {
   if (confirmedRoute.value && currentPoiIndex.value < confirmedRoute.value.stops.length - 1) {
     currentPoiIndex.value++;
-    updateRoutePoiMarkers();
-    zoomToCurrentPoi();
+    // updateRoutePoiMarkers() and zoomToCurrentPoi() are handled by the watcher
   }
 }
 
@@ -960,10 +1374,23 @@ function updateRoutePoiMarkers() {
 
   if (!confirmedRoute.value || !confirmedRoute.value.stops) return;
 
+  // Hide origin marker when in navigation mode
+  if (origin) {
+    if (!isRoutePlanningMode.value) {
+      origin.setOpacity(0);
+      origin.dragging?.disable();
+    } else {
+      origin.setOpacity(1);
+      origin.dragging?.enable();
+    }
+  }
+
   // Add route POIs with special styling
   confirmedRoute.value.stops.forEach((stop, index) => {
     let icon;
     if (index === 0) {
+      // Skip start marker if in navigation mode (GPS marker replaces it)
+      if (!isRoutePlanningMode.value) return;
       icon = startIcon; // Start marker
     } else if (index === confirmedRoute.value.stops.length - 1 && tripMode.value === "end") {
       icon = endIcon; // End marker
@@ -1054,6 +1481,14 @@ async function buildTour() {
 
 function displayRoute(routeData) {
   if (tourLayer) tourLayer.remove();
+  if (currentLegLayer) {
+    // Clear pulse interval if exists
+    if (currentLegLayer._pulseInterval) {
+      clearInterval(currentLegLayer._pulseInterval);
+    }
+    currentLegLayer.remove();
+    currentLegLayer = null;
+  }
   window._stopMarkers.forEach((m) => m.remove());
   window._stopMarkers = [];
   routePoiMarkers.forEach(marker => marker.remove());
@@ -1070,6 +1505,11 @@ function displayRoute(routeData) {
 
   if (tourLayer && tourLayer.getBounds().isValid()) {
     map.fitBounds(tourLayer.getBounds(), { padding: [20, 20] });
+  }
+  
+  // Update current leg highlight after route is displayed
+  if (!isRoutePlanningMode.value && currentNavInfo.value) {
+    updateCurrentLegHighlight(currentNavInfo.value);
   }
 }
 
@@ -1111,6 +1551,13 @@ onMounted(() => {
       tourLayer.remove();
       tourLayer = null;
     }
+    if (currentLegLayer) {
+      if (currentLegLayer._pulseInterval) {
+        clearInterval(currentLegLayer._pulseInterval);
+      }
+      currentLegLayer.remove();
+      currentLegLayer = null;
+    }
     window._stopMarkers.forEach((m) => m.remove());
     window._stopMarkers = [];
     routePoiMarkers.forEach(marker => marker.remove());
@@ -1139,6 +1586,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointerup", onPointerUp);
   window.removeEventListener("touchmove", onPointerMove);
   window.removeEventListener("touchend", onPointerUp);
+  stopNavigationTracking();
 });
 
 watch(radius, (v) => {
@@ -1169,6 +1617,402 @@ watch([selectedPoi, sheetState], () => {
   dragTranslate      = dragStartTranslate;
 });
 
+// Watch for changes in current navigation leg and update highlighted path
+watch(currentNavInfo, (navInfo) => {
+  updateCurrentLegHighlight(navInfo);
+  updateDeviationLine(navInfo);
+}, { immediate: true });
+
+// Watch GPS position and advance leg index when user reaches destination stop
+watch(currentGPSPosition, (pos) => {
+  if (!pos || !confirmedRoute.value || isRoutePlanningMode.value) return;
+  
+  const stops = confirmedRoute.value.stops || [];
+  const navLegs = confirmedRoute.value.navigation_legs || [];
+  
+  if (stops.length === 0 || navLegs.length === 0) return;
+  
+  const [currentLat, currentLon] = pos;
+  const currentLegIndex = currentNavLegIndex.value;
+  
+  // Check if we've reached the destination stop of the current leg
+  // The destination stop for leg i is stop i+1
+  if (currentLegIndex + 1 < stops.length) {
+    const destinationStop = stops[currentLegIndex + 1];
+    const distanceToDestination = haversineDistance(
+      currentLat, currentLon,
+      destinationStop.lat, destinationStop.lon
+    );
+    
+    // Advance to next leg when within 50 meters of destination
+    const THRESHOLD_DISTANCE = 50; // meters
+    if (distanceToDestination < THRESHOLD_DISTANCE && currentLegIndex < navLegs.length - 1) {
+      currentNavLegIndex.value = currentLegIndex + 1;
+      // Automatically switch the bottom sheet to show the arrived-at stop
+      currentPoiIndex.value = currentLegIndex + 1;
+    }
+  }
+}, { immediate: false });
+
+// Watch for changes in currentPoiIndex and automatically zoom/pan to that stop
+// This works both when manually switching stops AND when automatically arriving at a stop
+watch(currentPoiIndex, (newIndex, oldIndex) => {
+  if (!confirmedRoute.value || !map) return;
+  
+  // Only auto-zoom if we're in navigation mode (not planning mode)
+  // In planning mode, user might be exploring, so don't force zoom
+  if (isRoutePlanningMode.value) {
+    // In planning mode, just update markers
+    updateRoutePoiMarkers();
+  } else {
+    // In navigation mode, update markers and zoom/pan to the stop
+    updateRoutePoiMarkers();
+    zoomToCurrentPoi();
+    
+    // If manually switching stops (not auto-arrival), move the GPS marker to simulate position
+    // Only do this if the index actually changed (avoid on initial mount)
+    if (oldIndex !== undefined && oldIndex !== null && newIndex !== oldIndex && currentLocationMarker) {
+      const stop = confirmedRoute.value.stops[newIndex];
+      if (stop) {
+        // Set manual mode temporarily to prevent GPS from overriding
+        isManualMode.value = true;
+        
+        // Move the marker to the selected stop's position
+        const newPos = [stop.lat, stop.lon];
+        currentLocationMarker.setLatLng(newPos);
+        currentGPSPosition.value = newPos;
+        
+        // Update navigation leg index to match the selected stop
+        // If we're at stop i, we're traveling from stop i-1 to stop i, so leg index is i-1
+        // For stop 0, leg index is 0
+        if (newIndex > 0) {
+          currentNavLegIndex.value = newIndex - 1;
+        } else {
+          currentNavLegIndex.value = 0;
+        }
+        
+        // Note: We keep manual mode active so user can see the simulation
+        // They can reset to actual GPS when ready
+      }
+    }
+  }
+}, { immediate: false });
+
+function updateCurrentLegHighlight(navInfo) {
+  // Remove existing highlight
+  if (currentLegLayer) {
+    // Clear pulse interval if exists
+    if (currentLegLayer._pulseInterval) {
+      clearInterval(currentLegLayer._pulseInterval);
+      currentLegLayer._pulseInterval = null;
+    }
+    currentLegLayer.remove();
+    currentLegLayer = null;
+  }
+  
+  // Only show highlight during navigation mode
+  if (!navInfo || isRoutePlanningMode.value || !confirmedRoute.value || !map) return;
+  
+  const navLegs = confirmedRoute.value.navigation_legs || [];
+  const leg = navLegs[navInfo.legIndex];
+  
+  if (!leg || !leg.coords_latlon || leg.coords_latlon.length === 0) return;
+  
+  // Convert [lat, lon] to [lon, lat] for GeoJSON
+  const coordsLonLat = leg.coords_latlon.map(([lat, lon]) => [lon, lat]);
+  
+  // Create highlighted path with distinctive styling
+  currentLegLayer = L.geoJSON({
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: coordsLonLat
+    }
+  }, {
+    style: {
+      color: "#00ff00", // Bright green
+      weight: 6, // Thicker than the main route
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+      dashArray: "10, 5" // Dashed pattern for visibility
+    }
+  }).addTo(map);
+  
+  // Add a pulsing effect by toggling dash pattern
+  if (currentLegLayer) {
+    let dashToggle = true;
+    const pulseInterval = setInterval(() => {
+      if (!currentLegLayer || !map.hasLayer(currentLegLayer)) {
+        clearInterval(pulseInterval);
+        return;
+      }
+      dashToggle = !dashToggle;
+      currentLegLayer.setStyle({
+        dashArray: dashToggle ? "10, 5" : "20, 10"
+      });
+    }, 1000);
+    
+    // Store interval ID to clear it later
+    if (currentLegLayer) {
+      currentLegLayer._pulseInterval = pulseInterval;
+    }
+  }
+}
+
+function updateDeviationLine(navInfo) {
+  if (!navInfo || !map || !currentGPSPosition.value) return;
+  
+  // Remove existing deviation line
+  if (deviationLineLayer) {
+    deviationLineLayer.remove();
+    deviationLineLayer = null;
+  }
+  
+  // Only show deviation line if off-route and we have a nearest route point
+  if (navInfo.isOffRoute && navInfo.nearestRoutePoint) {
+    const [userLat, userLon] = currentGPSPosition.value;
+    const [routeLat, routeLon] = navInfo.nearestRoutePoint;
+    
+    // Draw a line from user position to nearest route point
+    deviationLineLayer = L.polyline(
+      [[userLat, userLon], [routeLat, routeLon]],
+      {
+        color: '#ff6b00', // Orange-red color for deviation
+        weight: 3,
+        opacity: 0.7,
+        dashArray: '5, 10', // Dashed line
+        lineCap: 'round',
+        lineJoin: 'round'
+      }
+    ).addTo(map);
+  }
+}
+
+/* ---------------- navigation tracking ---------------- */
+/**
+ * GPS Location Explanation:
+ * 
+ * We use the browser's Geolocation API (navigator.geolocation) which:
+ * 1. Uses device GPS, Wi-Fi positioning, and cell tower triangulation
+ * 2. Is FREE (no API costs) - uses browser's built-in location services
+ * 3. Requires user permission on first use
+ * 
+ * watchPosition() continuously updates the user's location:
+ * - enableHighAccuracy: true = requests GPS (more accurate but uses more battery)
+ * - maximumAge: 5000ms = allows cached location up to 5 seconds old
+ * - timeout: 10000ms = gives GPS 10 seconds to respond before timing out
+ * 
+ * The location updates trigger:
+ * - Marker position on map
+ * - Map centering/following
+ * - Navigation calculations (which leg you're on, distance to turns)
+ * - Turn-by-turn instructions
+ */
+function startNavigationTracking() {
+  if (!navigator.geolocation) return;
+  if (geoWatchId !== null) return;
+  geoWatchId = navigator.geolocation.watchPosition(
+    ({ coords }) => {
+      // Don't update if user is manually dragging
+      if (isManualMode.value) return;
+      
+      const p = [coords.latitude, coords.longitude];
+      currentGPSPosition.value = p; // Update GPS position for navigation calculations
+      
+      if (!currentLocationMarker) {
+        currentLocationMarker = L.marker(p, { 
+          icon: currentLocationIcon, 
+          zIndexOffset: 1000,
+          draggable: true // Make marker draggable for simulation
+        }).addTo(map);
+        
+        // Set up drag handlers
+        currentLocationMarker.on('dragstart', () => {
+          isManualMode.value = true; // Pause GPS updates while dragging
+        });
+        
+        currentLocationMarker.on('drag', (e) => {
+          const pos = e.target.getLatLng();
+          currentGPSPosition.value = [pos.lat, pos.lng]; // Update position for navigation calculations
+          // Update map view to follow the marker
+          if (!isRoutePlanningMode.value && map) {
+            const z = map.getZoom?.() || 0;
+            if (z < 17) map.setView(pos, 17); else map.panTo(pos);
+          }
+        });
+        
+        currentLocationMarker.on('dragend', (e) => {
+          const pos = e.target.getLatLng();
+          currentGPSPosition.value = [pos.lat, pos.lng]; // Update position for navigation calculations
+          // Keep manual mode active - user can reset with button
+          // Update map view
+          if (!isRoutePlanningMode.value && map) {
+            map.panTo(pos);
+          }
+        });
+      } else {
+        currentLocationMarker.setLatLng(p);
+      }
+      if (!isRoutePlanningMode.value && map && !isManualMode.value) {
+        const z = map.getZoom?.() || 0;
+        if (z < 17) map.setView(p, 17); else map.panTo(p);
+      }
+    },
+    (err) => {
+      console.warn('watchPosition error', err);
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+  );
+}
+
+function resetToGPSLocation() {
+  if (!navigator.geolocation) {
+    toast("Geolocation not supported");
+    return;
+  }
+  
+  // Show loading state
+  isResettingGPS.value = true;
+  
+  // Exit manual mode and resume GPS tracking
+  isManualMode.value = false;
+  
+  // Helper function to update marker position
+  const updateMarkerPosition = (p) => {
+    currentGPSPosition.value = p; // Update GPS position
+    
+    if (currentLocationMarker) {
+      currentLocationMarker.setLatLng(p);
+    } else {
+      currentLocationMarker = L.marker(p, { 
+        icon: currentLocationIcon, 
+        zIndexOffset: 1000,
+        draggable: true
+      }).addTo(map);
+      
+      // Set up drag handlers
+      currentLocationMarker.on('dragstart', () => {
+        isManualMode.value = true;
+      });
+      
+      currentLocationMarker.on('drag', (e) => {
+        const pos = e.target.getLatLng();
+        currentGPSPosition.value = [pos.lat, pos.lng]; // Update position for navigation
+        if (!isRoutePlanningMode.value && map) {
+          const z = map.getZoom?.() || 0;
+          if (z < 17) map.setView(pos, 17); else map.panTo(pos);
+        }
+      });
+      
+      currentLocationMarker.on('dragend', (e) => {
+        const pos = e.target.getLatLng();
+        currentGPSPosition.value = [pos.lat, pos.lng]; // Update position for navigation
+        if (!isRoutePlanningMode.value && map) {
+          map.panTo(pos);
+        }
+      });
+    }
+    
+    if (map) {
+      const z = map.getZoom?.() || 0;
+      if (z < 17) map.setView(p, 17); else map.panTo(p);
+    }
+    
+    // Reset navigation state to start when resetting GPS
+    if (confirmedRoute.value && !isRoutePlanningMode.value) {
+      currentNavLegIndex.value = 0; // Reset to first navigation leg
+      currentPoiIndex.value = 0; // Reset to first stop (start point)
+      // The watcher will automatically update markers and zoom when currentPoiIndex changes
+    }
+    
+    // Hide loading state
+    isResettingGPS.value = false;
+    toast("📍 Reset to GPS location");
+  };
+  
+  // If we already have a current GPS position from watchPosition, use it as fallback
+  const fallbackPosition = currentGPSPosition.value;
+  
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => {
+      const p = [coords.latitude, coords.longitude];
+      updateMarkerPosition(p);
+    },
+    (err) => {
+      console.warn("Geolocation error:", err);
+      
+      // Provide specific error messages
+      let errorMsg = "Unable to get GPS location";
+      switch(err.code) {
+        case err.PERMISSION_DENIED:
+          errorMsg = "Location permission denied. Please enable location access in your browser settings.";
+          break;
+        case err.POSITION_UNAVAILABLE:
+          errorMsg = "Location unavailable. Using last known position.";
+          // Try to use fallback position if available
+          if (fallbackPosition) {
+            updateMarkerPosition(fallbackPosition);
+            toast("📍 Using last known location");
+            return;
+          }
+          break;
+        case err.TIMEOUT:
+          errorMsg = "Location request timed out. Using last known position.";
+          // Try to use fallback position if available
+          if (fallbackPosition) {
+            updateMarkerPosition(fallbackPosition);
+            toast("📍 Using last known location");
+            return;
+          }
+          break;
+        default:
+          // For unknown errors, try fallback
+          if (fallbackPosition) {
+            updateMarkerPosition(fallbackPosition);
+            toast("📍 Using last known location");
+            return;
+          }
+      }
+      
+      isResettingGPS.value = false; // Hide loading state on error
+      toast(errorMsg);
+      isManualMode.value = false; // Allow GPS to resume if it was tracking
+    },
+    { 
+      enableHighAccuracy: true, 
+      timeout: 15000, // 15 seconds timeout
+      maximumAge: 10000 // Allow using cached location up to 10 seconds old (faster response)
+    }
+  );
+}
+
+function stopNavigationTracking() {
+  if (geoWatchId !== null && navigator.geolocation) {
+    try { navigator.geolocation.clearWatch(geoWatchId); } catch {}
+    geoWatchId = null;
+  }
+  if (currentLocationMarker) {
+    try { currentLocationMarker.remove(); } catch {}
+    currentLocationMarker = null;
+  }
+  isManualMode.value = false; // Reset manual mode flag
+  
+  // Remove current leg highlight when stopping navigation
+  if (currentLegLayer) {
+    if (currentLegLayer._pulseInterval) {
+      clearInterval(currentLegLayer._pulseInterval);
+    }
+    currentLegLayer.remove();
+    currentLegLayer = null;
+  }
+  
+  // Remove deviation line when stopping navigation
+  if (deviationLineLayer) {
+    deviationLineLayer.remove();
+    deviationLineLayer = null;
+  }
+}
 </script>
 
 <style>
@@ -1190,24 +2034,347 @@ html, body, #app {
   z-index: 1;
 }
 
-/* Mode Toggle */
-.mode-toggle {
+/* Navigation Banner (Google Maps style) */
+.nav-banner {
   position: absolute;
-  top: 80px;
-  right: 20px;
-  z-index: 1000;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(15, 22, 32, 0.48);
+  color: #eef4ff;
+  backdrop-filter: blur(2px) saturate(115%);
+  -webkit-backdrop-filter: blur(2px) saturate(115%);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  border-bottom: 1px solid rgba(255,255,255,0.25);
+  z-index: 1001;
+  padding: 14px 18px;
+  border-radius: 0 0 14px 14px;
 }
 
-.mode-btn {
-  background: linear-gradient(135deg, #6a5cff 0%, #ff3db3 100%);
-  color: white;
-  border: none;
-  border-radius: 20px;
-  padding: 10px 16px;
-  font-weight: bold;
+.nav-banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Main Distance Display */
+.nav-distance-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-distance {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #eef4ff;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.nav-distance.off-route-distance {
+  color: #ff6b6b;
+}
+
+.nav-destination {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #eef4ff;
+  line-height: 1.3;
+  margin-top: 2px;
+  opacity: 0.95;
+}
+
+.nav-time {
+  font-size: 0.85rem;
+  color: #eef4ff;
+  font-weight: 500;
+  margin-top: 2px;
+  opacity: 0.85;
+}
+
+/* Turn Instruction (when close) - Primary Display */
+.nav-turn-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-left: 4px solid #6a5cff;
+  margin-bottom: 4px;
+}
+
+.nav-turn-instruction-text {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #eef4ff;
+  line-height: 1.4;
+  letter-spacing: -0.3px;
+}
+
+.nav-turn-main .nav-turn-time {
+  font-size: 0.85rem;
+  color: #eef4ff;
+  font-weight: 500;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* "Then to destination" when turn is primary */
+.nav-to-destination {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+  color: #eef4ff;
+  padding-left: 4px;
+  margin-top: 4px;
+  opacity: 0.9;
+}
+
+.nav-destination-label {
+  font-weight: 500;
+  opacity: 0.85;
+  font-size: 0.85rem;
+}
+
+.nav-destination-distance {
+  font-size: 1rem;
+  opacity: 0.95;
+  font-weight: 600;
+  color: #eef4ff;
+}
+
+/* Upcoming Turn (secondary info) */
+.nav-turn-upcoming {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.nav-turn-upcoming .nav-turn-instruction-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #eef4ff;
+  line-height: 1.3;
+  opacity: 0.95;
+}
+
+.nav-turn-upcoming .nav-turn-time {
+  font-size: 0.8rem;
+  color: #eef4ff;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+/* Deviation Warning Styles */
+.nav-deviation-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 152, 0, 0.2);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(255, 152, 0, 0.4);
+  border-left: 4px solid #ff9800;
+  animation: pulse-warning 2s ease-in-out infinite;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+@keyframes pulse-warning {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.nav-deviation-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.nav-deviation-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-deviation-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ff6b6b;
+  line-height: 1.2;
+}
+
+.nav-deviation-distance {
+  font-size: 0.85rem;
+  color: #ff9800;
+  font-weight: 600;
+  line-height: 1.2;
+  opacity: 0.9;
+}
+
+/* Manual Mode Indicator */
+.nav-manual-mode-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 193, 7, 0.2);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  border-left: 4px solid #ffc107;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.manual-mode-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.manual-mode-text {
+  flex: 1;
+  font-size: 0.85rem;
+  color: #ffc107;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.manual-mode-reset-btn {
+  background: rgba(255, 193, 7, 0.3);
+  border: 1px solid rgba(255, 193, 7, 0.5);
+  color: #ffc107;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.manual-mode-reset-btn:hover {
+  background: rgba(255, 193, 7, 0.4);
+  border-color: rgba(255, 193, 7, 0.7);
+  transform: translateY(-1px);
+}
+
+.manual-mode-reset-btn:active {
+  transform: translateY(0);
+}
+
+/* Location Buttons */
+.location-buttons {
+  position: absolute;
+  top: 90px;
+  right: 20px;
   z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Adjust location buttons position when nav banner is shown - account for banner height */
+.nav-banner ~ .location-buttons {
+  top: 160px; /* Increased to ensure buttons are below banner even with deviation warning */
+}
+
+.location-btn {
+  position: relative;
+  background: rgba(15, 22, 32, 0.7);
+  color: #eef4ff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  transition: all 0.2s ease;
+}
+
+.location-btn:hover {
+  background: rgba(15, 22, 32, 0.85);
+  transform: scale(1.05);
+}
+
+.location-btn:hover .location-btn-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+.location-btn:first-child {
+  background: linear-gradient(135deg, rgba(0, 198, 255, 0.3) 0%, rgba(0, 114, 255, 0.3) 100%);
+  border-color: rgba(0, 198, 255, 0.4);
+}
+
+.location-btn:last-child {
+  background: linear-gradient(135deg, rgba(255, 152, 0, 0.3) 0%, rgba(247, 124, 0, 0.3) 100%);
+  border-color: rgba(255, 152, 0, 0.4);
+}
+
+.location-btn.loading {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.location-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.location-btn .spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+.location-btn-tooltip {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-8px);
+  background: rgba(15, 22, 32, 0.95);
+  color: #eef4ff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.2);
+  z-index: 1001;
+}
+
+.location-btn-tooltip::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-left-color: rgba(15, 22, 32, 0.95);
 }
 
 /* Bottom sheet */
@@ -1220,6 +2387,8 @@ html, body, #app {
   color: #eef4ff;
   backdrop-filter: blur(2px) saturate(115%);
   -webkit-backdrop-filter: blur(2px) saturate(115%);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-bottom: none;
   border-radius: 14px 14px 0 0;
   box-shadow: 0 -10px 30px rgba(0,0,0,0.35);
   z-index: 1002;
@@ -1368,6 +2537,7 @@ html, body, #app {
 
 .route-summary {
   background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 10px;
   padding: 12px;
 }
@@ -1386,6 +2556,7 @@ html, body, #app {
 
 .current-poi-card {
   background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 10px;
   padding: 12px;
 }
@@ -1393,6 +2564,30 @@ html, body, #app {
 .current-poi-card h4 {
   margin: 0 0 10px 0;
   text-align: center;
+}
+
+.cancel-nav-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #ff3db3 0%, #ff5f5f 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: bold;
+  font-size: 0.95rem;
+  cursor: pointer;
+  margin-top: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+
+.cancel-nav-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+}
+
+.cancel-nav-btn:active {
+  transform: translateY(0);
 }
 
 .poi-navigation {
@@ -1425,6 +2620,7 @@ html, body, #app {
 /* Route Selection */
 .route-selection {
   background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 10px;
   padding: 12px;
   margin-bottom: 12px;
@@ -1464,6 +2660,47 @@ html, body, #app {
   padding: 10px;
   font-weight: bold;
   cursor: pointer;
+  margin-bottom: 8px;
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+
+.confirm-route-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 200, 83, 0.3);
+}
+
+.confirm-route-btn:active {
+  transform: translateY(0);
+}
+
+.generate-new-route-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #6a5cff 0%, #ff3db3 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+
+.generate-new-route-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(106, 92, 255, 0.3);
+}
+
+.generate-new-route-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.generate-new-route-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Dense layout */
@@ -1487,7 +2724,7 @@ html, body, #app {
 /* Slider */
 .cardish.compact {
   background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 10px;
   padding: 8px 10px;
 }
@@ -1664,6 +2901,7 @@ html, body, #app {
 
 .route-info-card {
   background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 10px;
   padding: 16px;
 }
@@ -1703,6 +2941,7 @@ html, body, #app {
 /* POI List */
 .poi-list-container {
   background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 10px;
   padding: 16px;
   max-height: 300px;
@@ -1728,7 +2967,7 @@ html, body, #app {
   padding: 10px;
   background: rgba(255,255,255,0.05);
   border-radius: 8px;
-  border: 1px solid transparent;
+  border: 1px solid rgba(255,255,255,0.2);
   transition: all 0.2s ease;
 }
 

@@ -16,6 +16,7 @@ from app_tour import (
     build_sites,
     feasible_sites_mask,
     osrm_route_leg,
+    osrm_route_leg_detailed,
 )
 
 # Ensure the folder containing api.py is on sys.path
@@ -295,14 +296,28 @@ def _real_build_tour(req: TourRequest):
     if end_coord is not None:
         stops_latlon.append(end_coord)
 
-    # 2) Build snapped or straight path (GeoJSON lon/lat order)
+    # 2) Build snapped or straight path (GeoJSON lon/lat order) + navigation info
+    navigation_legs = []  # Detailed info for each leg
     if req.router == "osrm" and getattr(req, "snap_path", False):
         base = req.router_url or os.getenv("OSRM_URL")
         coords_lonlat = []
         for i in range(len(stops_latlon) - 1):
-            seg_latlon, _, _ = osrm_route_leg(base, stops_latlon[i], stops_latlon[i + 1])  # [[lat,lon],...]
+            # Get detailed route info with street names
+            detailed = osrm_route_leg_detailed(base, stops_latlon[i], stops_latlon[i + 1])
+            seg_latlon = detailed["coords_latlon"]
             seg_lonlat = [[lon, lat] for (lat, lon) in seg_latlon]
             coords_lonlat.extend(seg_lonlat if not coords_lonlat else seg_lonlat[1:])
+            
+            # Store navigation info for this leg
+            navigation_legs.append({
+                "from_stop_index": i,
+                "to_stop_index": i + 1,
+                "distance_m": detailed["distance_m"],
+                "duration_s": detailed["duration_s"],
+                "next_street_name": None,  # OSRM doesn't reliably provide street names
+                "steps": detailed["steps"],
+                "coords_latlon": detailed["coords_latlon"],  # Add coordinates for highlighting
+            })
         path_geo = {
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": coords_lonlat},
@@ -416,6 +431,7 @@ def _real_build_tour(req: TourRequest):
         },
         "stops": enriched_stops,
         "path": path_geo,
+        "navigation_legs": navigation_legs,  # Street names and distances for each leg
         "pois": pois_data,
         "route_pois": route_pois,
         "roundtrip": roundtrip,
