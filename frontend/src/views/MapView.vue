@@ -44,6 +44,91 @@
             </div>
           </div>
         </div>
+        
+        <!-- POI DETAILS VIEW (opens when a map marker is clicked) -->
+        <!-- POI DETAILS VIEW -->
+        <div
+          v-else-if="selectedPoi"
+          class="poi-details-sheet"
+          :class="{ expanded: showFullExtract }"
+        >
+
+          <!-- Sticky Header -->
+          <div class="poi-sheet-header">
+            <h3 class="panel-title">{{ selectedPoi.name || 'Place' }}</h3>
+            <button class="close-sheet-btn" @click="clearSelectedPoi">✕</button>
+          </div>
+
+          <!-- Scrollable Body -->
+          <div class="poi-scroll">
+            <div class="poi-meta">
+              <div class="poi-line">
+              </div>
+            <div class="poi-extract" :class="{ clamped: shouldClamp && !showFullExtract }">
+              {{ selectedPoi.extractFull }}
+            </div>
+
+              <!-- Inline actions (old Read more style + Open article, separated by •) -->
+              <div class="read-actions">
+                <template v-if="shouldClamp">
+                  <button class="text-link" @click="onToggleReadMore">
+                    {{ showFullExtract ? 'Show less' : 'Read more' }}
+                  </button>
+                </template>
+
+                <template v-if="(selectedPoi.wv?.project && selectedPoi.wv?.title)">
+                  <span class="sep" v-if="shouldClamp">•</span>
+                  <a
+                    :href="`https://${selectedPoi.wv.project}/wiki/${selectedPoi.wv.title}`"
+                    target="_blank"
+                    class="text-link"
+                  >
+                    Open article
+                  </a>
+                </template>
+
+                <!-- Views + score -->
+                <span class="views" v-if="selectedPoi.wv">
+                  📖 {{ (selectedPoi.wv.views_365 || 0).toLocaleString() }} views
+                  <span v-if="selectedPoi.devScore !== null">
+                    &nbsp;•&nbsp;⭐ {{ Number(selectedPoi.devScore).toFixed(2) }}
+                  </span>
+                </span>
+
+                <!-- Categories last - (truncated in compact, full when expanded) -->
+                <div
+                  v-if="(selectedPoi.kindsArr || []).length"
+                  class="categories-line"
+                  :class="{ clamped: !showFullExtract }"
+                >
+                  <strong>Categories:</strong>
+                  {{ (showFullExtract ? selectedPoi.kindsArr : selectedPoi.kindsArr.slice(0, 6)).join(', ') }}
+                </div>
+              </div>
+
+              
+
+            </div>
+              <!-- Docked Footer (always same place) -->
+            <div class="poi-actions docked">
+              <button class="action primary" @click="addPoiToRoute(selectedPoi)">
+                ➕ Add to route
+              </button>
+
+              <div class="row">
+                <button class="action" @click="setAsStart(selectedPoi.lat, selectedPoi.lon)">
+                  Start
+                </button>
+                <button class="action danger" @click="setAsEnd(selectedPoi.lat, selectedPoi.lon)">
+                  End
+                </button>
+              </div>
+            </div>
+            
+          </div>
+
+        </div>
+
 
         <!-- ROUTE SELECTION VIEW (after generating routes, before confirmation) -->
         <div v-else-if="selectedEndStart && isRoutePlanningMode" class="route-selection-view">
@@ -207,6 +292,13 @@ const currentPoiIndex = ref(0);
 const isRoutePlanningMode = ref(true);
 const selectedEndStart = ref(false); // New state to track if we're selecting between routes
 
+//POI read in bottom sheet:
+const selectedPoi = ref(null);  // NEW STATE: When we have selected a POI and want to read about it. 
+const showFullExtract = ref(false);
+const shouldClamp = computed(() => (selectedPoi.value?.extractFull?.length || 0) > 300);
+let currentSelectedMarker = null;
+
+
 // End position management
 const endPositionSelected = ref(false);
 const endLat = ref(null);
@@ -248,15 +340,28 @@ const currentPoiDetails = computed(() => {
 
 /* ---------------- bottom sheet ---------------- */
 const STATES = ["peek", "mid", "expanded"];
-const STATE_POS = { peek: 88, mid: 1, expanded: 0 };
+//const STATE_POS = { peek: 88, mid: 42, expanded: 0 };
+
+const STATE_POS_MAP = {
+  planning: { peek: 88, mid: 1,  expanded: 0 },  
+  poi:      { peek: 88, mid: 42, expanded: 0 },  
+};
+
+// Which set is active now?
+const activeStatePos = computed(() =>
+  selectedPoi.value ? STATE_POS_MAP.poi : STATE_POS_MAP.planning
+);
+
 const sheetState = ref("mid");
 const STEP_TRIGGER_PX = 28;
 
 const dragging = ref(false);
-let dragStartY = 0, lastY = 0, dragStartTranslate = STATE_POS[sheetState.value], dragTranslate = STATE_POS[sheetState.value];
+let dragStartY = 0, lastY = 0;
+let dragStartTranslate = activeStatePos.value[sheetState.value];
+let dragTranslate      = activeStatePos.value[sheetState.value];
 
 const sheetStyle = computed(() => ({
-  transform: `translateY(${dragging.value ? dragTranslate : STATE_POS[sheetState.value]}%)`,
+  transform: `translateY(${dragging.value ? dragTranslate : activeStatePos.value[sheetState.value]}%)`,
 }));
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -269,7 +374,7 @@ function onPointerDown(e) {
   dragging.value = true;
   dragStartY = getY(e);
   lastY = dragStartY;
-  dragStartTranslate = STATE_POS[sheetState.value];
+  dragStartTranslate = activeStatePos.value[sheetState.value];
   dragTranslate = dragStartTranslate;
   window.addEventListener("pointermove", onPointerMove, { passive: true });
   window.addEventListener("pointerup", onPointerUp, { passive: true });
@@ -296,6 +401,16 @@ function onPointerUp() {
   if (!dragging.value) return;
   dragging.value = false;
   const target = snapStepwiseByPixels(sheetState.value, dragStartY, lastY);
+
+  //emulate Read more / Show less when a POI is open
+  /* if (selectedPoi.value && shouldClamp.value) {
+    showFullExtract.value = (target === 'expanded'); // expanded => read more; else show less
+  } */
+  // Always sync with sheet state when inspecting a POI
+  if (selectedPoi.value) {
+    showFullExtract.value = (target === 'expanded'); // expanded => full; mid/peek => compact
+  }
+
   sheetState.value = target;
   window.removeEventListener("pointermove", onPointerMove);
   window.removeEventListener("pointerup", onPointerUp);
@@ -303,13 +418,92 @@ function onPointerUp() {
   window.removeEventListener("touchend", onPointerUp);
 }
 
+//--------------------HELPERS FOR OPENING POI IN BOTTOM SHEET--------------------------
+function openPoiInSheet(props) {
+  const det = props?.det || props?.details || {};
+  const wv = props?.wv || props?.wiki || null;
+  const kindsArr = Array.isArray(props?.kinds)
+    ? props.kinds
+    : typeof props?.kinds === "string"
+    ? props.kinds.split(",").map((s) => s.trim())
+    : [];
+
+  const extractFull = det?.wikipedia_extracts?.text || "";
+  const xid = props?.xid;
+  const otm =
+    det?.otm ||
+    det?.url ||
+    (xid ? `https://opentripmap.com/en/card?xid=${encodeURIComponent(xid)}` : null);
+
+  const devScore = props?.score ?? (det?.score ?? null);
+
+  selectedPoi.value = {
+    ...props,
+    kindsArr,
+    wv,
+    extractFull,
+    otm,
+    devScore,
+  };
+
+  showFullExtract.value = false;
+  sheetState.value = 'mid';
+
+  if (props.lat && props.lon) {
+    const z = map?.getZoom?.() ?? 0;
+    if (z < 17) {
+      map.setView([props.lat, props.lon], 17);
+    } else {
+      map.panTo([props.lat, props.lon]); // keep current zoom, no zoom-out
+    }
+  }
+  //if (props.lat && props.lon) map.setView([props.lat, props.lon], 17);
+
+
+}
+
+function clearSelectedPoi() {
+  selectedPoi.value = null;
+  showFullExtract.value = false;
+
+  if (currentSelectedMarker) {
+    currentSelectedMarker.getElement()?.classList.remove('pulse');
+    const props = currentSelectedMarker.options.props;
+    const hasWiki = !!((props?.wv || props?.wiki)?.title);
+    currentSelectedMarker.setIcon(hasWiki ? poiGreenIcon : poiGrayIcon);
+    currentSelectedMarker = null;
+  }
+
+  sheetState.value = "mid";
+}
+
+function addPoiToRoute(poi) {
+  // plug in your real logic later
+  toast(`Added "${poi.name || 'POI'}" to route`);
+}
+
+function onToggleReadMore() {
+  showFullExtract.value = !showFullExtract.value;
+  if (showFullExtract.value) {
+    // expand to full height when showing all text
+    sheetState.value = 'expanded';
+  } else {
+    // collapse back to normal view when hiding it again
+    sheetState.value = 'mid';
+  }
+
+
+}
+
+
 /* ---------------- Mode Toggle ---------------- */
 function toggleMode() {
+  selectedPoi.value = null;
   isRoutePlanningMode.value = !isRoutePlanningMode.value;
   if (isRoutePlanningMode.value && confirmedRoute.value) {
     // When switching back to planning mode, keep the route displayed but allow modifications
     displayRoute(confirmedRoute.value);
-    selectedEndStart.value = false;
+    selectedEndStart.value = false;  //From oliver
   } else if (confirmedRoute.value) {
     // When switching to navigation mode, focus on current POI
     zoomToCurrentPoi();
@@ -382,6 +576,15 @@ const routePoiIcon = L.icon({
   iconAnchor: [12, 41],
   shadowSize: [41, 41],
 });
+
+const poiSelectedIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-violet.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+  iconSize: [26, 40],
+  iconAnchor: [13, 40],
+  shadowSize: [41, 41],
+});
+
 
 /* ---------------- popup builder ---------------- */
 function buildPoiPopup(props, isCoordinatePopup = false) {
@@ -533,7 +736,7 @@ function setAsStart(lat, lon) {
   toast("✅ Start position updated!");
   
   // Close any open popups
-  map.closePopup();
+  //map.closePopup();
   
   // Reload POIs around the new start position
   loadPois();
@@ -557,7 +760,7 @@ function setAsEnd(lat, lon) {
   toast("✅ End position set! You can now generate your route.");
   
   // Close any open popups
-  map.closePopup();
+  //map.closePopup();
 }
 
 function clearEndPosition() {
@@ -573,19 +776,18 @@ function clearEndPosition() {
 
 /* ---------------- map click ---------------- */
 function onMapClick(e) {
-  const { lat: clat, lng: clng } = e.latlng;
-  
-  // Don't show coordinate popup when in route selection mode
-  if (selectedEndStart.value) {
+  // If a POI sheet is open, close it and return
+  if (selectedPoi.value) {
+    clearSelectedPoi();
     return;
   }
-  
-  // Show compact coordinate popup for both modes when not in route selection
+
+  // Don't show coordinate popup during route selection
+  if (selectedEndStart.value) return;
+
+  const { lat: clat, lng: clng } = e.latlng;
   const popupContent = buildPoiPopup({ lat: clat, lon: clng }, true);
-  L.popup()
-    .setLatLng(e.latlng)
-    .setContent(popupContent)
-    .openOn(map);
+  L.popup().setLatLng(e.latlng).setContent(popupContent).openOn(map);
 }
 
 /* ---------------- API: Load POIs ---------------- */
@@ -608,13 +810,30 @@ async function loadPois() {
   (data.features || []).forEach((f) => {
     const [gLon, gLat] = f.geometry.coordinates;
     const props = f.properties || {};
-    const popupHtml = buildPoiPopup({ ...props, lat: gLat, lon: gLon, geometry: f.geometry });
+    //const popupHtml = buildPoiPopup({ ...props, lat: gLat, lon: gLon, geometry: f.geometry });
     const hasWiki = !!((props.wv || props.wiki)?.title);
     const icon = hasWiki ? poiGreenIcon : poiGrayIcon;
     
-    const marker = L.marker([gLat, gLon], { icon }).bindPopup(popupHtml, {
+    /* const marker = L.marker([gLat, gLon], { icon }).bindPopup(popupHtml, {
       maxWidth: 280,
       className: "wiki-popup",
+    }); */
+
+    const marker = L.marker([gLat, gLon], { icon });
+    marker.on('click', () => {
+      if (currentSelectedMarker) {
+        currentSelectedMarker.getElement()?.classList.remove('pulse');
+        const prevProps = currentSelectedMarker.options.props;
+        const prevHasWiki = !!((prevProps?.wv || prevProps?.wiki)?.title);
+        currentSelectedMarker.setIcon(prevHasWiki ? poiGreenIcon : poiGrayIcon);
+      }
+
+      marker.setIcon(poiSelectedIcon);
+      marker.once('add', () => marker.getElement()?.classList.add('pulse'));
+      currentSelectedMarker = marker;
+      marker.options.props = props;
+
+      openPoiInSheet({ ...props, lat: gLat, lon: gLon, geometry: f.geometry });
     });
     
     poiCluster.addLayer(marker);
@@ -655,9 +874,11 @@ async function nextRoute() {
 }
 
 function confirmRoute() {
+  selectedPoi.value = null; 
   confirmedRoute.value = generatedRoutes.value[currentRouteIndex.value];
   currentPoiIndex.value = 0;
   isRoutePlanningMode.value = false;
+  selectedEndStart.value = false; // THIS ONE, OLIVER WANTED TO REMOVE, NOT SURE WHY
   updateRoutePoiMarkers();
   zoomToCurrentPoi();
   sheetState.value = "mid";
@@ -679,11 +900,21 @@ function nextPoi() {
   }
 }
 
-function zoomToCurrentPoi() {
+/* function zoomToCurrentPoi() {
   if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return;
   
   const stop = confirmedRoute.value.stops[currentPoiIndex.value];
   map.setView([stop.lat, stop.lon], 17);
+} */
+function zoomToCurrentPoi() {
+  if (!confirmedRoute.value || !confirmedRoute.value.stops || confirmedRoute.value.stops.length === 0) return;
+  const stop = confirmedRoute.value.stops[currentPoiIndex.value];
+  const z = map?.getZoom?.() ?? 0;
+  if (z < 17) {
+    map.setView([stop.lat, stop.lon], 17);
+  } else {
+    map.panTo([stop.lat, stop.lon]);
+  }
 }
 
 function updateRoutePoiMarkers() {
@@ -785,6 +1016,7 @@ function displayRoute(routeData) {
 /* ---------------- generate ---------------- */
 async function generateRoute() {
   if (isGenerating.value) return;
+  selectedPoi.value = null;
   isGenerating.value = true;
   try {
     await buildTour();
@@ -835,6 +1067,8 @@ onMounted(() => {
 
   loadPois();
   map.on("click", onMapClick);
+  map.on("dragstart", clearSelectedPoi);
+  map.on("zoomstart", clearSelectedPoi);
 });
 
 onBeforeUnmount(() => {
@@ -861,6 +1095,17 @@ watch(tripMode, (v) => {
     clearEndPosition();
   }
 });
+
+watch(selectedPoi, () => {
+  dragStartTranslate = activeStatePos.value[sheetState.value];
+  dragTranslate      = dragStartTranslate;
+});
+
+watch([selectedPoi, sheetState], () => {
+  dragStartTranslate = activeStatePos.value[sheetState.value];
+  dragTranslate      = dragStartTranslate;
+});
+
 </script>
 
 <style>
@@ -1458,7 +1703,7 @@ html, body, #app {
 
 .poi-categories {
   font-size: 0.75rem;
-  opacity: 0.7;
+  opacity: 0.95;
 }
 
 /* Enhanced POI details in navigation view */
@@ -1508,4 +1753,247 @@ html, body, #app {
 .poi-list-container::-webkit-scrollbar-thumb:hover {
   background: rgba(255,255,255,0.5);
 }
+
+/* .poi-details-sheet { display:flex; flex-direction:column; gap:12px; } */
+
+
+.poi-sheet-header { display:flex; align-items:center; justify-content:center; position:relative; }
+.close-sheet-btn {
+  position:absolute; right:4px; top:-4px; border:none; background:transparent; color:#fff; font-size:1.1rem; cursor:pointer;
+}
+.poi-meta { 
+  margin-bottom: 0; 
+}
+
+
+.poi-line { font-size:.9rem; margin-bottom:4px; }
+.poi-cats { font-size:.8rem; opacity:.8; margin-bottom:6px; }
+.poi-extract { font-size:.9rem; line-height:1.35; margin:6px 0; }
+.poi-links a, .poi-wiki a { color:#6a5cff; text-decoration:none; }
+.poi-actions { display:flex; flex-direction:column; gap:8px; }
+.poi-actions .row { display:flex; gap:8px; }
+.action { flex:1; padding:10px; border:none; border-radius:8px; cursor:pointer; background:rgba(255,255,255,0.15); color:#eef4ff; }
+.action.primary { background: linear-gradient(135deg,#6a5cff 0%, #3db3ff 100%); }
+.action.danger  { background: linear-gradient(135deg,#ff3db3 0%, #ff5f5f 100%); }
+
+
+.poi-details-sheet {
+  /* already present… we’ll extend it */
+  display: grid;                         /* NEW: 3-row grid */
+  grid-template-rows: auto 1fr auto;     /* header / scroll / footer */
+  height: 58vh;
+  min-height: 280px;
+  overflow: hidden;
+  /* keep your existing props here (background, etc.) */
+}
+
+
+.poi-sheet-header {
+  position: sticky;
+  top: 0;
+  background: rgba(15, 22, 32, 0.65);
+  backdrop-filter: blur(6px);
+  z-index: 2;
+  text-align: center;
+  padding: 6px 32px;
+  border-bottom: 1px solid rgba(106, 92, 255, 0.4);
+}
+
+
+
+:root{
+  /* Height of your bottom tab bar/home indicator clearance */
+  --footer-offset: calc(72px + env(safe-area-inset-bottom));
+}
+
+.poi-scroll{
+  overflow-y: auto;
+  padding: 8px 6px;
+  /* leave room for sticky footer + a little breathing space */
+  padding-bottom: calc(12px + var(--footer-offset));
+}
+
+.poi-actions.sticky{
+  position: sticky;
+  bottom: var(--footer-offset);   /* <- sits above your tab bar */
+  z-index: 2;
+  padding: 12px 8px 14px;
+  background: linear-gradient(180deg, rgba(15,22,32,0.04), rgba(15,22,32,0.7));
+  border-top: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(4px);
+}
+
+
+/* Small comfort tweaks for buttons */
+.poi-actions .row {
+  display: flex;
+  gap: 10px;                             /* slightly bigger gap */
+}
+
+.action {
+  flex: 1;
+  padding: 11px;                         /* just a touch more height */
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: rgba(255,255,255,0.15);
+  color: #eef4ff;
+}
+
+
+
+.poi-extract.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.readmore-btn {
+  background: none;
+  border: none;
+  color: #6a5cff;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.leaflet-marker-icon.pulse {
+  animation: pulse-marker 1.4s infinite;
+}
+
+@keyframes pulse-marker {
+  0% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(106, 92, 255, 0.6)); }
+  70% { transform: scale(1.1); filter: drop-shadow(0 0 12px rgba(106, 92, 255, 0.9)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(106, 92, 255, 0.6)); }
+}
+.poi-sheet-header {
+  border-bottom: 1px solid rgba(106, 92, 255, 0.4);
+}
+
+.read-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+/* .link-pill {
+  appearance: none;
+  border: 1px solid rgba(106, 92, 255, 0.65);
+  background: rgba(106, 92, 255, 0.18);
+  color: #e9e6ff;            
+  font-weight: 800;           
+  font-size: 0.9rem;
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform .07s ease, border-color .15s ease, background .15s ease;
+}
+
+.link-pill:hover {
+  transform: translateY(-1px);
+  border-color: rgba(106, 92, 255, 0.9);
+  background: rgba(106, 92, 255, 0.28);
+}  */
+
+/* new */
+.read-actions { display:flex; align-items:center; gap:10px; margin-top:6px; flex-wrap:wrap; }
+.text-link {
+  background:none; border:none; padding:0;
+  color:#e9e6ff; opacity:.95;
+  text-decoration:underline; font-weight:600; font-size:.95rem;
+  cursor:pointer;
+}
+.text-link:hover { opacity:1; }
+.sep { opacity:.7; }
+/* new ends */
+
+.views {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #e9e6ff;
+  opacity: 0.95;
+  margin-bottom: 0px;
+  padding-bottom: 0;
+}
+
+/* the old readmore button can be removed or kept unused */
+.readmore-btn { display: none; }
+
+.inline-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* The link-style buttons (matches old "Read more" feel) */
+.read-inline {
+  appearance: none;
+  background: none;
+  border: none;
+  color: #e9e6ff;
+  opacity: 0.95;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  padding: 0;
+  cursor: pointer;
+}
+
+.read-inline:hover {
+  opacity: 1;
+}
+
+/* separator dot between the two links when both exist */
+.dot-sep {
+  margin: 0 6px;
+  opacity: 0.7;
+}
+
+/* views moved to own row for cleaner layout (no overlap with links) */
+.views-row {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #e9e6ff;
+  opacity: 0.95;
+}
+
+/* .categories-line { margin-top: 2px; } */
+
+.categories-line {
+  margin-top: 0px;
+  opacity: .95;
+}
+
+/* .categories-line.compact .cats-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;        
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: .95;
+}
+ */
+.categories-line.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;        /* keep to 1 line; change to 2 if you prefer */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* optional: hint it’s truncating when compact */
+.categories-line.compact { opacity: .95; }
+
+
+/* keep horizontal spacing, kill the vertical gap between rows */
+/* .read-actions{ gap: 0 10px; }     
+.categories-line{ margin-top: 0; } 
+ */
+.read-actions { gap: 3px 10px; }   /* row-gap 2px, column-gap 10px */
+.categories-line { margin-top: 1px; line-height: 1.18; }
+.views { line-height: 1.18; }
+
 </style>
