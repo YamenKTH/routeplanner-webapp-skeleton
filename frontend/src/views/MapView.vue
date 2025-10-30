@@ -7,6 +7,9 @@
       <button class="mode-btn" @click="toggleMode">
         {{ isRoutePlanningMode ? '📍 View Route' : '🗺️ Plan New Route' }}
       </button>
+      <button class="mode-btn" style="margin-left:8px; background:linear-gradient(135deg,#00c6ff 0%, #0072ff 100%);" @click="useMyLocation">
+        📡 My location
+      </button>
     </div>
 
     <!-- Bottom sheet -->
@@ -536,6 +539,33 @@ function toast(msg) {
   document.body.appendChild(el);
   setTimeout(() => (el.style.opacity = "0"), 1000);
   setTimeout(() => el.remove(), 1300);
+}
+
+/* ---------------- use my location ---------------- */
+function useMyLocation() {
+  if (!navigator.geolocation) {
+    toast("Geolocation not supported");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => {
+      lat.value = coords.latitude;
+      lon.value = coords.longitude;
+      const p = [lat.value, lon.value];
+
+      if (origin) origin.setLatLng(p);
+      if (circle) circle.setLatLng(p);
+      if (map) map.setView(p, Math.max(map.getZoom?.() || 14, 15));
+
+      loadPois();
+      toast("📡 Positioned to your location");
+    },
+    (err) => {
+      console.warn("Geolocation error:", err);
+      toast("Unable to get location");
+    },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+  );
 }
 
 /* ---------------- marker icons ---------------- */
@@ -1099,6 +1129,9 @@ onMounted(() => {
   map.on("click", onMapClick);
   map.on("dragstart", clearSelectedPoi);
   map.on("zoomstart", clearSelectedPoi);
+
+  // Try to use browser geolocation on load
+  useMyLocation();
 });
 
 onBeforeUnmount(() => {
