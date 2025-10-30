@@ -186,7 +186,13 @@
                 <div class="poi-number">{{ index + 1 }}</div>
                 <div class="poi-content">
                   <div class="poi-name">{{ stop.name || `Stop ${index + 1}` }}</div>
-                  <div class="poi-categories" v-if="stop.categories">{{ stop.categories.join(', ') }}</div>
+                  <div class="poi-desc" v-if="stop.description" style="font-size: .85rem; opacity: .9; margin-top: 2px; line-height: 1.25;">
+                    {{ stop.description.length > 180 ? (stop.description.slice(0, 180) + '…') : stop.description }}
+                  </div>
+                  <div class="poi-meta" style="margin-top: 4px; font-size: .75rem; opacity: .85; display: flex; gap: 8px; align-items: center;">
+                    <span v-if="typeof stop.views_365 === 'number'">📖 {{ stop.views_365.toLocaleString() }}</span>
+                    <a v-if="stop.wiki_url" :href="stop.wiki_url" target="_blank" style="color:#6a5cff; text-decoration: none;">Open article ↗</a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -965,19 +971,43 @@ async function buildTour() {
     };
 
     const { data } = await api.post("/api/tour", payload);
-    
-    // For now, create 5 hardcoded routes (in real implementation, these would come from backend)
+
+    // Map backend route POIs to stops (start, poi..., [end]) with real details
+    const routePois = Array.isArray(data.route_pois) ? data.route_pois : [];
+    const stopsWithDetails = (data.stops || []).map((s, idx, arr) => {
+      const isStart = idx === 0;
+      const isEnd = idx === arr.length - 1 && tripMode.value === "end" && !!arr.length;
+      if (isStart || isEnd) {
+        return {
+          ...s,
+          name: s.name || (isStart ? "Start" : "End"),
+        };
+      }
+      const rp = routePois[idx - 1] || {};
+      const kindsArr = Array.isArray(rp.kinds)
+        ? rp.kinds
+        : typeof rp.kinds === 'string'
+          ? rp.kinds.split(',').map(t => t.trim()).filter(Boolean)
+          : [];
+      const description = rp?.det?.wikipedia_extracts?.text || '';
+      return {
+        ...s,
+        name: rp.name || s.name || `POI ${idx}`,
+        categories: kindsArr,
+        description,
+        det: rp.det,
+        wv: rp.wv,
+        xid: rp.xid,
+      };
+    });
+
+    // Keep multi-candidate UI but use real enriched stops
     generatedRoutes.value = Array(5).fill(null).map((_, index) => ({
       ...data,
       id: index,
       distance: (Math.random() * 5 + 2).toFixed(1),
       time: `${Math.floor(Math.random() * 120 + 30)} min`,
-      stops: (data.stops || []).map((stop, stopIndex) => ({
-        ...stop,
-        name: stop.name || `POI ${stopIndex + 1}`,
-        categories: ['Landmark', 'Cultural', 'Historical'].slice(0, Math.floor(Math.random() * 3) + 1),
-        description: 'This is a point of interest along your route with interesting features to explore.'
-      }))
+      stops: stopsWithDetails,
     }));
     
     currentRouteIndex.value = 0;

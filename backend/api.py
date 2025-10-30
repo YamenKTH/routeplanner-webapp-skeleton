@@ -332,7 +332,80 @@ def _real_build_tour(req: TourRequest):
             "distance_m": int(haversine_m(start[0], start[1], p.lat, p.lon)),
         })
 
-    # Return stops as a simple ordered array (the tour path is visual, POIs layer handles popups)
+    # Build ordered POIs used by the route (aligned with tour.site_ids; excludes start/end)
+    coord_to_poi = {(round(p.lat, 6), round(p.lon, 6)): p for p in pois}
+    route_pois = []
+    for sid in tour.site_ids:
+        s = id_to_site.get(sid)
+        if not s:
+            continue
+        key = (round(s.lat, 6), round(s.lon, 6))
+        p = coord_to_poi.get(key)
+        if not p:
+            continue
+        route_pois.append({
+            "xid": p.xid,
+            "name": p.name,
+            "lat": p.lat,
+            "lon": p.lon,
+            "kinds": getattr(p, "kinds", []),
+            "raw_rate": getattr(p, "raw_rate", None),
+            "score": getattr(p, "score", None),
+            "det": details_map.get(p.xid),
+            "wv": wiki_views.get(p.xid),
+            "distance_m": int(haversine_m(start[0], start[1], p.lat, p.lon)),
+        })
+
+    # Enrich stops with names and ids (start, poi..., [end])
+    enriched_stops = []
+    def _shorten(text: Optional[str], limit: int = 220) -> Optional[str]:
+        if not text:
+            return None
+        text = text.strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "…"
+
+    if stops_latlon:
+        enriched_stops.append({
+            "lat": stops_latlon[0][0],
+            "lon": stops_latlon[0][1],
+            "name": "Start",
+            "description": "Route start",
+            "xid": None,
+            "categories": [],
+        })
+    for i, rp in enumerate(route_pois):
+        slat, slon = stops_latlon[i + 1]
+        xid = rp.get("xid")
+        det = details_map.get(xid) if xid else None
+        wv = wiki_views.get(xid) if xid else None
+        extract = (det or {}).get("wikipedia_extracts", {}).get("text", None)
+        wiki_url = None
+        if wv and wv.get("project") and wv.get("title"):
+            wiki_url = f"https://{wv['project']}/wiki/{wv['title']}"
+        enriched_stops.append({
+            "lat": slat,
+            "lon": slon,
+            "name": rp.get("name") or f"POI {i+1}",
+            "xid": xid,
+            "description": _shorten(extract, 220),
+            "wiki_url": wiki_url,
+            "views_365": (wv or {}).get("views_365"),
+            "categories": (getattr(coord_to_poi.get((round(slat,6), round(slon,6)), None), "kinds", []) if True else []),
+        })
+    if len(stops_latlon) > (1 + len(route_pois)):
+        slat, slon = stops_latlon[-1]
+        enriched_stops.append({
+            "lat": slat,
+            "lon": slon,
+            "name": "End",
+            "description": "Route end",
+            "xid": None,
+            "categories": [],
+        })
+
+    # Return
     return {
         "tour": {
             "site_ids": tour.site_ids,
@@ -341,9 +414,10 @@ def _real_build_tour(req: TourRequest):
             "stop_score": getattr(tour, "stop_score", 0),
             "passby_score": getattr(tour, "passby_score", 0.0),
         },
-        "stops": [{"lat": lat, "lon": lon} for (lat, lon) in stops_latlon],
+        "stops": enriched_stops,
         "path": path_geo,
-        "pois": pois_data,                 # <— NEW: structured data for Vue popups
+        "pois": pois_data,
+        "route_pois": route_pois,
         "roundtrip": roundtrip,
         "time_budget_s": budget_s,
     }
