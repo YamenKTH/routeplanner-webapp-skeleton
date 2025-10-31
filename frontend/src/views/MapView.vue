@@ -701,23 +701,27 @@ const sheetStyle = computed(() => ({
 }));
 
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
 function getY(evt) {
-  if (evt.touches && evt.touches.length) return evt.touches[0].clientY;
-  if (evt.changedTouches && evt.changedTouches.length) return evt.changedTouches[0].clientY;
+  if (evt.touches && evt.touches.length) return -evt.touches[0].clientY;
+  if (evt.changedTouches && evt.changedTouches.length) return -evt.changedTouches[0].clientY;
   return -evt.clientY;
 }
 function onPointerDown(e) {
+  e.preventDefault?.();
   dragging.value = true;
   dragStartY = getY(e);
   lastY = dragStartY;
   dragStartTranslate = activeStatePos.value[sheetState.value];
   dragTranslate = dragStartTranslate;
-  window.addEventListener("pointermove", onPointerMove, { passive: true });
-  window.addEventListener("pointerup", onPointerUp, { passive: true });
-  window.addEventListener("touchmove", onPointerMove, { passive: true });
-  window.addEventListener("touchend", onPointerUp, { passive: true });
+  window.addEventListener("pointermove", onPointerMove, { passive: false });
+  window.addEventListener("pointerup", onPointerUp, { passive: false });
+  window.addEventListener("touchmove", onPointerMove, { passive: false });
+  window.addEventListener("touchend", onPointerUp, { passive: false });
+ 
 }
 function onPointerMove(e) {
+  e.preventDefault?.();
   if (!dragging.value) return;
   const y = getY(e);
   const dy = y - dragStartY;
@@ -1188,6 +1192,10 @@ function onMapClick(e) {
   const popupContent = buildPoiPopup({ lat: clat, lon: clng }, true);
   L.popup().setLatLng(e.latlng).setContent(popupContent).openOn(map);
 }
+
+
+
+
 
 /* ---------------- API: Load POIs ---------------- */
 async function loadPois() {
@@ -2019,12 +2027,13 @@ function stopNavigationTracking() {
 html, body, #app {
   height: 100%;
   margin: 0;
+  overscroll-behavior: none;
 }
 
 #map-container {
   position: relative;
   width: 100%;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -2394,6 +2403,7 @@ html, body, #app {
   z-index: 1002;
   transition: transform 220ms ease;
   will-change: transform;
+  touch-action: none;
 }
 
 /* Drag handle */
@@ -2405,7 +2415,7 @@ html, body, #app {
   justify-content: center;
   cursor: grab;
   user-select: none;
-  touch-action: pan-y;
+  touch-action: none;
 }
 
 .sheet-handle-lines {
@@ -3023,7 +3033,7 @@ html, body, #app {
 .poi-categories {
   font-weight: 600;
   margin-bottom: 4px;
-  color: #6a5cff;
+  color: #ffb6f4;
 }
 
 .poi-description {
