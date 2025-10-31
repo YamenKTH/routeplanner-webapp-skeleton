@@ -176,17 +176,25 @@
             </div>
               <!-- Docked Footer (always same place) -->
             <div class="poi-actions docked">
-              <button class="action primary" @click="addPoiToRoute(selectedPoi)">
+              <button
+                v-if="isPoiInActiveRoute(selectedPoi)"
+                class="action danger"
+                @click="removePoiFromRoute(selectedPoi)"
+              >
+                ➖ Remove from route
+              </button>
+
+              <button
+                v-else
+                class="action primary"
+                @click="addPoiToRoute(selectedPoi)"
+              >
                 ➕ Add to route
               </button>
 
-              <div class="row">
-                <button class="action" @click="setAsStart(selectedPoi.lat, selectedPoi.lon)">
-                  Start
-                </button>
-                <button class="action danger" @click="setAsEnd(selectedPoi.lat, selectedPoi.lon)">
-                  End
-                </button>
+              <div class="row" v-if="showStartEnd">
+                <button class="action" @click="setAsStart(selectedPoi.lat, selectedPoi.lon)">Start</button>
+                <button class="action danger" @click="setAsEnd(selectedPoi.lat, selectedPoi.lon)">End</button>
               </div>
             </div>
             
@@ -421,6 +429,36 @@ const currentPoiDetails = computed(() => {
     description: stop.description || 'No description available'
   };
 });
+
+const showStartEnd = computed(() => {
+  // Only in initial planning view (before route generation)
+  return isRoutePlanningMode.value && !selectedEndStart.value;
+});
+
+// --- after other refs/computeds ---
+const activeRoute = computed(() => {
+  // During route-selection, use the currently browsed candidate
+  if (isRoutePlanningMode.value && selectedEndStart.value) return currentRoute.value;
+  // Otherwise, if we have a confirmed route (navigation/planning), use it
+  if (confirmedRoute.value) return confirmedRoute.value;
+  return null;
+});
+
+// prefer xid; fall back to lat/lon/name matching
+function poiKey(p) {
+  if (p?.xid) return `xid:${p.xid}`;
+  const lat = Number(p?.lat ?? p?.geometry?.coordinates?.[1]);
+  const lon = Number(p?.lon ?? p?.geometry?.coordinates?.[0]);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) return `ll:${lat.toFixed(6)},${lon.toFixed(6)}`;
+  return `name:${(p?.name || '').toLowerCase()}`;
+}
+
+/**function isPoiInActiveRoute(poi) {
+  const r = activeRoute.value;
+  if (!r?.stops?.length) return false;
+  const k = poiKey(poi);
+  return r.stops.some(s => poiKey(s) === k);
+}**/
 
 // Haversine distance calculation (in meters)
 function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -808,18 +846,25 @@ function clearSelectedPoi() {
 
   if (currentSelectedMarker) {
     currentSelectedMarker.getElement()?.classList.remove('pulse');
-    const props = currentSelectedMarker.options.props;
-    const hasWiki = !!((props?.wv || props?.wiki)?.title);
-    currentSelectedMarker.setIcon(hasWiki ? poiGreenIcon : poiGrayIcon);
+    const p = currentSelectedMarker.options.props;
+    const hasWiki = !!((p?.wv || p?.wiki)?.title);
+    const inRoute = isPoiInActiveRoute(p);
+    currentSelectedMarker.setIcon(inRoute ? poiInRouteIcon : (hasWiki ? poiGreenIcon : poiGrayIcon));
     currentSelectedMarker = null;
   }
-
   //sheetState.value = "mid";
 }
 
-function addPoiToRoute(poi) {
+async function addPoiToRoute(poi) {
   // plug in your real logic later
   toast(`Added "${poi.name || 'POI'}" to route`);
+  await loadPois();
+}
+
+async function removePoiFromRoute(poi) {
+  // plug in your real logic later
+  toast(`Removed "${poi.name || 'POI'}" from route`);
+  await loadPois();
 }
 
 function onToggleReadMore() {
@@ -853,25 +898,14 @@ function toggleMode() {
 }
 
 function cancelNavigation() {
-  selectedPoi.value = null;
-  isRoutePlanningMode.value = true;
-  if (confirmedRoute.value) {
-    displayRoute(confirmedRoute.value);
-    selectedEndStart.value = false;
-  }
-  stopNavigationTracking();
+  // fully clear route layers, markers, navigation, and reactive state
+  resetPlanningState();
+  toast("🛑 Navigation cancelled. You’re back in planning mode.");
 }
 
 function goBackToPlanning() {
-  selectedPoi.value = null;
-  selectedEndStart.value = false; // Go back to planning view
-  // Stop any navigation tracking if active
-  stopNavigationTracking();
-  // Reset navigation state
-  if (confirmedRoute.value) {
-    isRoutePlanningMode.value = true;
-    displayRoute(confirmedRoute.value);
-  }
+  resetPlanningState();   // fully clears old route & UI and returns to planning
+  toast("🔄 Start planning a new route");
 }
 
 /* ---------------- feedback helper ---------------- */
@@ -978,6 +1012,14 @@ const poiSelectedIcon = L.icon({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
   iconSize: [26, 40],
   iconAnchor: [13, 40],
+  shadowSize: [41, 41],
+});
+
+const poiInRouteIcon = L.icon({
+  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+  iconSize: [22, 34],
+  iconAnchor: [11, 34],
   shadowSize: [41, 41],
 });
 
@@ -1216,33 +1258,39 @@ async function loadPois() {
 
   (data.features || []).forEach((f) => {
     const [gLon, gLat] = f.geometry.coordinates;
-    const props = f.properties || {};
-    //const popupHtml = buildPoiPopup({ ...props, lat: gLat, lon: gLon, geometry: f.geometry });
-    const hasWiki = !!((props.wv || props.wiki)?.title);
-    const icon = hasWiki ? poiGreenIcon : poiGrayIcon;
-    
-    /* const marker = L.marker([gLat, gLon], { icon }).bindPopup(popupHtml, {
-      maxWidth: 280,
-      className: "wiki-popup",
-    }); */
+    const rawProps = f.properties || {};
+
+    // Ensure the props we keep on the marker include lat/lon/geometry for matching
+    const baseProps = { ...rawProps, lat: gLat, lon: gLon, geometry: f.geometry };
+
+    // Pick icon based on route membership first, then wiki/gray
+    const hasWiki  = !!((baseProps.wv || baseProps.wiki)?.title);
+    const inRoute  = isPoiInActiveRoute(baseProps);
+    const icon     = inRoute ? poiInRouteIcon : (hasWiki ? poiGreenIcon : poiGrayIcon);
 
     const marker = L.marker([gLat, gLon], { icon });
+    marker.options.props = baseProps; // keep for later comparisons
+
     marker.on('click', () => {
+      // unhighlight previous
       if (currentSelectedMarker) {
         currentSelectedMarker.getElement()?.classList.remove('pulse');
-        const prevProps = currentSelectedMarker.options.props;
+        const prevProps   = currentSelectedMarker.options.props;
         const prevHasWiki = !!((prevProps?.wv || prevProps?.wiki)?.title);
-        currentSelectedMarker.setIcon(prevHasWiki ? poiGreenIcon : poiGrayIcon);
+        const prevInRoute = isPoiInActiveRoute(prevProps);
+        currentSelectedMarker.setIcon(prevInRoute ? poiInRouteIcon : (prevHasWiki ? poiGreenIcon : poiGrayIcon));
       }
 
+      // highlight this one
       marker.setIcon(poiSelectedIcon);
-      marker.once('add', () => marker.getElement()?.classList.add('pulse'));
-      currentSelectedMarker = marker;
-      marker.options.props = props;
+      // ensure the DOM element exists before adding the class
+      requestAnimationFrame(() => marker.getElement()?.classList.add('pulse'));
 
-      openPoiInSheet({ ...props, lat: gLat, lon: gLon, geometry: f.geometry });
+      currentSelectedMarker = marker;
+
+      openPoiInSheet(baseProps);
     });
-    
+
     poiCluster.addLayer(marker);
   });
 
@@ -1342,6 +1390,10 @@ function confirmRoute() {
   // Start GPS tracking (but it won't update position while in manual mode)
   // User must click "Reset to GPS" to enable GPS tracking
   startNavigationTracking();
+
+  updateRoutePoiMarkers();
+  sheetState.value = "mid";
+  loadPois();
 }
 
 function prevPoi() {
@@ -1416,6 +1468,33 @@ function updateRoutePoiMarkers() {
   });
 }
 
+function isPoiInActiveRoute(poi) {
+  const r = activeRoute.value;                // <- use candidate when selecting, confirmed when navigating
+  if (!r?.stops?.length) return false;
+
+  // Prefer stable IDs
+  const xid = poi?.xid ?? poi?.id ?? poi?.otm_id;
+  if (xid) return r.stops.some(s => s.xid === xid || s.id === xid || s.otm_id === xid);
+
+  // Fallback: location (and optional name assist)
+  const plat = Number(poi?.lat ?? poi?.geometry?.coordinates?.[1]);
+  const plon = Number(poi?.lon ?? poi?.geometry?.coordinates?.[0]);
+  if (!Number.isFinite(plat) || !Number.isFinite(plon)) return false;
+
+  const NAME = (poi?.name || '').trim().toLowerCase();
+  const TOL  = 50; // meters – real OSM/OTM coords often differ by >12 m
+
+  return r.stops.some(s => {
+    const d = haversineDistance(plat, plon, Number(s.lat), Number(s.lon));
+    if (d <= TOL) return true;
+    // If names match, allow a looser position tolerance
+    if (NAME && s.name && s.name.trim().toLowerCase() === NAME) {
+      return d <= 150;
+    }
+    return false;
+  });
+}
+
 /* ---------------- API: Build Tour ---------------- */
 async function buildTour() {
   try {
@@ -1481,7 +1560,8 @@ async function buildTour() {
     
     displayRoute(generatedRoutes.value[0]);
     sheetState.value = "mid";
-    
+    selectedEndStart.value = true;
+    await loadPois();
   } catch (err) {
     console.error("Failed to build tour:", err);
   }
@@ -1521,15 +1601,75 @@ function displayRoute(routeData) {
   }
 }
 
+function clearRouteDisplay() {
+  // main route layer
+  if (tourLayer) { try { tourLayer.remove(); } catch {} tourLayer = null; }
+
+  // highlighted leg (with pulsing)
+  if (currentLegLayer) {
+    if (currentLegLayer._pulseInterval) {
+      clearInterval(currentLegLayer._pulseInterval);
+      currentLegLayer._pulseInterval = null;
+    }
+    try { currentLegLayer.remove(); } catch {}
+    currentLegLayer = null;
+  }
+
+  // deviation line
+  if (deviationLineLayer) { try { deviationLineLayer.remove(); } catch {} deviationLineLayer = null; }
+
+  // any stop markers rendered for the route
+  (window._stopMarkers || []).forEach(m => { try { m.remove(); } catch {} });
+  window._stopMarkers = [];
+
+  // special route POI markers
+  routePoiMarkers.forEach(m => { try { m.remove(); } catch {} });
+  routePoiMarkers = [];
+}
+
+function resetPlanningState() {
+  // map layers
+  clearRouteDisplay();
+
+  // navigation tracking + simulated GPS marker
+  stopNavigationTracking();
+  if (currentLocationMarker) { try { currentLocationMarker.remove(); } catch {} currentLocationMarker = null; }
+
+  // reactive route state
+  confirmedRoute.value    = null;
+  generatedRoutes.value   = [];
+  currentRouteIndex.value = 0;
+  currentPoiIndex.value   = 0;
+  currentNavLegIndex.value = 0;
+
+  // end position state
+  endPositionSelected.value = false;
+  endLat.value = null;
+  endLon.value = null;
+  if (endMarker) { try { endMarker.remove(); } catch {} endMarker = null; }
+
+  // UI mode
+  isRoutePlanningMode.value = true;
+  selectedEndStart.value    = false;  // back to the “Plan” view
+  selectedPoi.value         = null;
+  sheetState.value          = "mid";
+
+  // restore draggable origin marker
+  if (origin) { origin.setOpacity(1); origin.dragging?.enable(); }
+
+  // refresh POIs around current start/radius
+  loadPois();
+}
+
 /* ---------------- generate ---------------- */
 async function generateRoute() {
   if (isGenerating.value) return;
   selectedPoi.value = null;
+  selectedEndStart.value = true;
   isGenerating.value = true;
   try {
     await buildTour();
     // Flip the state to show route selection view
-    selectedEndStart.value = true;
   } finally {
     isGenerating.value = false;
   }
@@ -3166,7 +3306,7 @@ html, body, #app {
 .readmore-btn {
   background: none;
   border: none;
-  color: #6a5cff;
+  color: #1805f1;
   font-size: 0.85rem;
   cursor: pointer;
   padding: 0;
