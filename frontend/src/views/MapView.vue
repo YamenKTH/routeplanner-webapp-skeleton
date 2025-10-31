@@ -814,7 +814,7 @@ function clearSelectedPoi() {
     currentSelectedMarker = null;
   }
 
-  sheetState.value = "mid";
+  //sheetState.value = "mid";
 }
 
 function addPoiToRoute(poi) {
@@ -1840,23 +1840,25 @@ function startNavigationTracking() {
           isManualMode.value = true; // Pause GPS updates while dragging
         });
         
+        let followTimeout = null;
         currentLocationMarker.on('drag', (e) => {
           const pos = e.target.getLatLng();
-          currentGPSPosition.value = [pos.lat, pos.lng]; // Update position for navigation calculations
-          // Update map view to follow the marker
-          if (!isRoutePlanningMode.value && map) {
-            const z = map.getZoom?.() || 0;
-            if (z < 17) map.setView(pos, 17); else map.panTo(pos);
-          }
+          currentGPSPosition.value = [pos.lat, pos.lng];
+          clearTimeout(followTimeout);
+          followTimeout = setTimeout(() => {
+            if (!isRoutePlanningMode.value && map) {
+              map.panTo(pos, { animate: true, duration: 0.2 });
+            }
+          }, 50);
         });
         
         currentLocationMarker.on('dragend', (e) => {
           const pos = e.target.getLatLng();
-          currentGPSPosition.value = [pos.lat, pos.lng]; // Update position for navigation calculations
-          // Keep manual mode active - user can reset with button
-          // Update map view
+          currentGPSPosition.value = [pos.lat, pos.lng];
           if (!isRoutePlanningMode.value && map) {
-            map.panTo(pos);
+            const z = map.getZoom?.() || 0;
+            if (z < 17) map.setView(pos, 17);
+            else map.panTo(pos);
           }
         });
       } else {
