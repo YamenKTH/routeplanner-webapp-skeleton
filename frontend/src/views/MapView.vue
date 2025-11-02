@@ -3,7 +3,7 @@
     <div id="map"></div>
 
     <!-- Navigation Banner (Google Maps style) -->
-    <div v-if="confirmedRoute && !isRoutePlanningMode && currentNavInfo && currentNavInfo.distance_m" class="nav-banner">
+    <div v-if="confirmedRoute && !isRoutePlanningMode && currentNavInfo && currentNavInfo" class="nav-banner">
       <!-- Show deviation warning if off-route -->
       <div v-if="currentNavInfo.isOffRoute" class="nav-deviation-warning">
         <div class="nav-deviation-icon">⚠️</div>
@@ -588,6 +588,8 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+
+
 const currentNavInfo = computed(() => {
   if (!confirmedRoute.value || isRoutePlanningMode.value || !currentGPSPosition.value) return null;
   
@@ -598,6 +600,13 @@ const currentNavInfo = computed(() => {
   
   // Ensure currentNavLegIndex is within valid range
   const legIndex = Math.max(0, Math.min(currentNavLegIndex.value, navLegs.length - 1));
+
+  if (!window.__lastLegIndex) window.__lastLegIndex = legIndex;
+  if (window.__lastLegIndex !== legIndex) {
+    if (window.__legProg) delete window.__legProg[`leg:${window.__lastLegIndex}`];
+    if (window.__navProgS) window.__navProgS.prev = null;
+    window.__lastLegIndex = legIndex;
+  }
   
   // Get the leg information
   try {
@@ -617,6 +626,45 @@ const currentNavInfo = computed(() => {
   }
   const leg = navLegs[legIndex];
   if (!leg) return null;
+  const legLen = Number(leg.distance_m) || 0;
+
+  function parseManeuver(step) {
+    // Accept object or string
+    if (step && typeof step.maneuver === 'object' && step.maneuver) {
+      const type = (step.maneuver.type || '').toLowerCase();
+      const mod  = (step.maneuver.modifier || '').toLowerCase();
+      const loc  = step.maneuver.location; // [lon, lat]
+      return { type, modifier: mod, location: loc };
+    }
+    const mStr = String(step?.maneuver || '').toLowerCase();
+    const [type, mod = ''] = mStr.includes(':') ? mStr.split(':') : [mStr, ''];
+    return { type: type.trim(), modifier: mod.trim(), location: step?.maneuver_location };
+  }
+
+  // -- map step starts to meters along the polyline using the maneuver location
+  function stepStartMeters(leg, step, accFallback) {
+    // OSRM maneuver location is [lon, lat]
+    const { location: loc } = parseManeuver(step);
+    if (Array.isArray(loc) && loc.length === 2
+        && Array.isArray(leg.coords_latlon) && leg.coords_latlon.length > 0) {
+      const [lon, lat] = loc;
+      const snap = projectToPolyline([lat, lon], leg.coords_latlon, leg._cum || [], leg._segLen || []);
+      if (snap && Number.isFinite(snap.measure_m)) return snap.measure_m;
+    }
+    // fallback if location missing
+    return accFallback;
+  }
+
+  let acc = 0;
+  const stepsResolved = (leg.steps || []).map((s) => {
+    const startByAcc = acc;
+    acc += Number(s.distance_m) || 0;
+    return { ...s, _start_m: stepStartMeters(leg, s, startByAcc) };
+  });
+  // sort in case projections reorder slightly
+  stepsResolved.sort((a, b) => (a._start_m || 0) - (b._start_m || 0));
+
+  leg._stepsResolved = stepsResolved;
   
   const [currentLat, currentLon] = currentGPSPosition.value;
   
@@ -633,8 +681,38 @@ const currentNavInfo = computed(() => {
       projectToPolyline([currentLat, currentLon], leg.coords_latlon, leg._cum || [], leg._segLen || []);
 
     deviationFromRoute = distanceToPath_m;
-    traveledDistance   = measure_m;
+    //traveledDistance   = measure_m;
     nearestRoutePoint  = [snappedLat, snappedLon];
+
+    // --- NEW: cap/monotonic progress per leg ---
+    if (!window.__legProg) window.__legProg = {};
+    const progKey = `leg:${legIndex}`;
+    const prev = window.__legProg[progKey]?.prev ?? 0;
+
+    // avg speed for caps
+    const speedMps = (leg.duration_s && leg.distance_m > 0)
+      ? (leg.distance_m / leg.duration_s)
+      : 1.35;
+
+    // allow bigger jumps when dragging than GPS
+    const maxFwd  = isManualMode.value ? 40 : Math.max(10, speedMps * 2.0); // meters per update
+    const maxBack = 10;                                                     // meters
+
+    let prog_m = measure_m;
+
+    // cap forward & backward motion
+    prog_m = Math.min(prog_m, prev + maxFwd);
+    prog_m = Math.max(prog_m, prev - maxBack);
+
+    // keep inside leg
+    
+    prog_m = Math.max(0, Math.min(prog_m, legLen));
+
+    // persist & use as traveledDistance
+    window.__legProg[progKey] = { prev: prog_m };
+    traveledDistance = prog_m;
+
+
   } else {
     // fallback to old vertex-nearest behavior
     let minDist = Infinity, idx = 0;
@@ -654,15 +732,16 @@ const currentNavInfo = computed(() => {
   }
     
   
+  traveledDistance = Math.max(0, Math.min(traveledDistance || 0, legLen));
   // Calculate remaining distance to next stop
   // If on-route (within threshold), use route-based distance; otherwise use direct distance
-  let remainingDistance = leg.distance_m;
+  let remainingDistance = Number(legLen) || 0;
   
   if (leg.coords_latlon && leg.coords_latlon.length > 0 && nextStop) {
     const directDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
     if (deviationFromRoute <= ON_PATH_FOR_DISTANCE_TOL) {
       // Prefer along-route distance while we’re reasonably close to the path
-      const remainingRouteDistance = Math.max(0, (leg.distance_m || 0) - (traveledDistance || 0));
+      const remainingRouteDistance = Math.max(0, legLen - (traveledDistance || 0));
       remainingDistance = remainingRouteDistance;
     } else {
       // Far from path → fall back to straight-line until we re-snap / reroute
@@ -676,108 +755,100 @@ const currentNavInfo = computed(() => {
   
   // Find the next turn/step based on user's position
   let nextTurn = null;
-  let distanceToTurn = null;
   
-  if (leg.steps && leg.steps.length > 0 && leg.coords_latlon && leg.coords_latlon.length > 0) {
-    // Calculate cumulative distance from start of leg
-    let cumulativeDistance = 0;
+
+  
+  
+  // --- BEGIN step finder (maneuver-anchored) ---
+  if (leg._stepsResolved && leg._stepsResolved.length > 0) {
+    // progress along leg (you already computed traveledDistance)
     
-    // Find the next turn step
-    for (let stepIndex = 0; stepIndex < leg.steps.length; stepIndex++) {
-      const step = leg.steps[stepIndex];
-      cumulativeDistance += step.distance_m;
-      
-      // If we haven't reached this step yet, and it's a turn
-      // Only show turns when on-route (within threshold) to avoid confusing instructions
-      if (cumulativeDistance > traveledDistance && step.maneuver && deviationFromRoute <= ON_PATH_FOR_DISTANCE_TOL) {
-        // Maneuver can be "type:modifier" format from backend (e.g., "turn:left", "new name:", "roundabout:left")
-        const maneuverStr = typeof step.maneuver === 'string' 
-          ? step.maneuver.toLowerCase() 
-          : String(step.maneuver).toLowerCase();
-        
-        // Split into type and modifier if format is "type:modifier"
-        const [maneuverType, maneuverModifier = ''] = maneuverStr.includes(':') 
-          ? maneuverStr.split(':')
-          : [maneuverStr, ''];
-        
-        const modifier = maneuverModifier.trim();
-        const maneuver = maneuverType; // Use just the type for checking
-        
-        // Check if it's a significant turn (not just continue straight)
-        // OSRM maneuver types: 'turn', 'new name', 'continue', 'ramp', 'roundabout', etc.
-        const isSignificantTurn = maneuver !== 'new name' && 
-          maneuver !== 'continue' && 
-          maneuver !== 'straight' &&
-          !maneuver.includes('depart') &&
-          !maneuver.includes('arrive');
-        
-        // Check for left/right in both modifier and full string
-        const hasLeft = modifier.includes('left') || maneuverStr.includes('left');
-        const hasRight = modifier.includes('right') || maneuverStr.includes('right');
-        const hasUtturn = modifier.includes('uturn') || modifier.includes('u-turn') || maneuverStr.includes('uturn');
-        
-        if (isSignificantTurn || hasLeft || hasRight || maneuver.includes('turn') ||
-            hasUtturn || maneuver.includes('merge') || maneuver.includes('ramp') || 
-            maneuver.includes('roundabout')) {
-          
-          // Calculate distance to this turn
-          distanceToTurn = cumulativeDistance - traveledDistance;
-          
-          // Format turn direction - prioritize modifier, then check type
-          let turnDirection = 'Turn';
-          
-          // Use modifier first (most specific), then fall back to parsing type
-          // NOTE: Reversed left/right because OSRM directions appear reversed on map from user's POV
-          if (hasLeft && !hasRight) {
-            if (modifier.includes('sharp') || maneuverStr.includes('sharp')) {
-              turnDirection = 'Sharp right';
-            } else if (modifier.includes('slight') || maneuverStr.includes('slight')) {
-              turnDirection = 'Slight right';
-            } else {
-              turnDirection = 'Turn right';
-            }
-          } else if (hasRight && !hasLeft) {
-            if (modifier.includes('sharp') || maneuverStr.includes('sharp')) {
-              turnDirection = 'Sharp left';
-            } else if (modifier.includes('slight') || maneuverStr.includes('slight')) {
-              turnDirection = 'Slight left';
-            } else {
-              turnDirection = 'Turn left';
-            }
-          } else if (hasUtturn) {
-            turnDirection = 'Make U-turn';
-          } else if (maneuver.includes('roundabout')) {
-            turnDirection = 'Enter roundabout';
-          } else if (maneuver.includes('merge')) {
-            turnDirection = 'Merge';
-          } else if (maneuver.includes('ramp')) {
-            turnDirection = 'Take ramp';
-          } else if (maneuver.includes('turn')) {
-            // Generic turn without direction specified
-            turnDirection = 'Turn';
-          }
-          
-          // Only add if it's a meaningful turn (not continue straight)
-          if (turnDirection !== 'Turn' || (!maneuver.includes('straight') && !maneuver.includes('continue'))) {
-            nextTurn = {
-              direction: turnDirection,
-              distance_m: Math.round(distanceToTurn),
-            };
-            break; // Found next turn, stop looking
-          }
-        }
+    let prog_m = Math.max(0, Math.min(traveledDistance || 0, legLen));
+
+    // light smoothing: weaker in manual mode so turns don't skip
+    if (!window.__navProgS) window.__navProgS = { prev: null };
+    const prevS = window.__navProgS.prev;
+    const alpha = isManualMode.value ? 0.25 : 0.6;
+    prog_m = (prevS == null) ? prog_m : (alpha * prog_m + (1 - alpha) * prevS);
+    window.__navProgS.prev = prog_m;
+
+    const steps = leg._stepsResolved;
+
+    // tolerances
+    const speedMps = (leg.duration_s && leg.distance_m > 0) ? (leg.distance_m / leg.duration_s) : 1.35;
+    const LOOKAHEAD_MAX = 100;   // don't announce farther than this
+    const UPCOMING_EPS  = Math.max(12, speedMps * 2.0);
+    const PASSED_EPS    = 4;     // after ~4 m past the start, skip (no lingering)
+    const EPS_R         = 0.02;  // small ratio fallback
+
+    const prog_r = legLen > 0 ? (prog_m / legLen) : 0;
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const stepStart = Number(step._start_m) || 0;
+      const delta     = stepStart - prog_m;   // + ahead, - behind
+      const passedBy  = -delta;
+
+      if (delta > LOOKAHEAD_MAX) continue;         // too far ahead
+      if (passedBy > PASSED_EPS) continue;         // clearly passed
+
+      // allow a bit beyond UPCOMING_EPS if ratios agree (geometry drift)
+      const ratioOk = (legLen > 0) && ((stepStart / legLen) >= (prog_r - EPS_R));
+      if (delta > UPCOMING_EPS && !ratioOk) continue;
+      // NOW IT ACTUALLY WORKS QUITE OK:
+      // significance filter (same as you had)
+      const { type: maneuver, modifier } = parseManeuver(step);
+      const mStr = `${maneuver}:${modifier}`; // for the 'sharp/slight' checks you already do
+
+      const hasLeft  = modifier.includes('left')  || mStr.includes('left');
+      const hasRight = modifier.includes('right') || mStr.includes('right');
+      const hasUturn = /u[- ]?turn/.test(modifier) || mStr.includes('uturn');
+      const signif = new Set([
+        'turn','fork','merge','ramp','on ramp','off ramp',
+        'roundabout','rotary','exit roundabout','end of road',
+        'continue','new name'
+      ]);
+      if (!(signif.has(maneuver) || hasLeft || hasRight || hasUturn)) continue;
+
+      // map direction (your existing mapping)
+      let turnDirection = 'Turn';
+      if (hasUturn) turnDirection = 'Make U-turn';
+      else if (maneuver.includes('roundabout') || maneuver === 'rotary') turnDirection = 'Enter roundabout';
+      else if (maneuver.includes('ramp')) turnDirection = 'Take ramp';
+      else if (maneuver === 'merge') turnDirection = 'Merge';
+      else if (maneuver === 'fork') {
+        if (hasLeft && !hasRight) turnDirection = 'Keep left';
+        else if (hasRight && !hasLeft) turnDirection = 'Keep right';
+        else turnDirection = 'Keep straight';
+      } else if (hasLeft && !hasRight) {
+        if (modifier.includes('sharp') || mStr.includes('sharp')) turnDirection = 'Sharp left';
+        else if (modifier.includes('slight') || mStr.includes('slight')) turnDirection = 'Slight left';
+        else turnDirection = 'Turn left';
+      } else if (hasRight && !hasLeft) {
+        if (modifier.includes('sharp') || mStr.includes('sharp')) turnDirection = 'Sharp right';
+        else if (modifier.includes('slight') || mStr.includes('slight')) turnDirection = 'Slight right';
+        else turnDirection = 'Turn right';
       }
+
+      const distToTurn = Math.max(0, Math.round(Math.max(0, delta)));
+      nextTurn = {
+        direction: turnDirection,
+        distance_m: distToTurn,
+        time_s: Math.round(distToTurn / (speedMps || 1.35)),
+      };
+      break;
     }
   }
+  // --- END step finder ---
   
   // Calculate time to next stop
   // Prefer OSRM's actual walking time (accounts for route complexity, elevation, etc.)
   // Fall back to distance/speed estimate if OSRM data not available
   let timeToNextStop;
   
-  if (leg.duration_s && leg.distance_m && leg.distance_m > 0) {
+  if (leg.duration_s && legLen > 0) {
     // Use OSRM's actual walking time, proportional to remaining distance
-    const progressRatio = 1 - (remainingDistance / leg.distance_m);
+    const progressRatio = 1 - (remainingDistance / legLen);
     const elapsedTime = leg.duration_s * Math.max(0, Math.min(1, progressRatio));
     timeToNextStop = Math.round(Math.max(0, leg.duration_s - elapsedTime));
   } else {
