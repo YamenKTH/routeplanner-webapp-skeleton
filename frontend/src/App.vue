@@ -1,24 +1,26 @@
 <template>
-  <div class="site-wrapper">
-    <TopNav />
-    <router-view />
+  <div class="phone-app">
+    <router-view class="phone-view" />
   </div>
 </template>
 
 <script setup>
-import TopNav from './components/TopNav.vue'
+// No BottomNav import needed for now
 </script>
 
 <style>
-body, html {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  background: #f7f7f7;
-}
-.site-wrapper {
+.phone-app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* 👇 important: small scroll area to hide Safari bars */
+  height: 101vh;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.phone-view {
+  flex: 1;
+  overflow: hidden;
 }
 </style>
