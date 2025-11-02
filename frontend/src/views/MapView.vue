@@ -412,7 +412,12 @@ const canGenerate = computed(() => {
 });
 
 const currentRoute = computed(() => {
-  return generatedRoutes.value[currentRouteIndex.value] || {};
+  const route = generatedRoutes.value[currentRouteIndex.value];
+  if (!route) {
+    console.warn(' WARNING: currentRoute is undefined – no generated route found');
+    return { stops: [], navigation_legs: [] };
+  }
+  return route;
 });
 
 const currentPoiName = computed(() => {
@@ -1665,11 +1670,11 @@ function resetPlanningState() {
 async function generateRoute() {
   if (isGenerating.value) return;
   selectedPoi.value = null;
-  selectedEndStart.value = true;
   isGenerating.value = true;
   try {
     await buildTour();
     // Flip the state to show route selection view
+    selectedEndStart.value = true;
   } finally {
     isGenerating.value = false;
   }
