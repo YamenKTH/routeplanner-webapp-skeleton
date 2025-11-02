@@ -357,6 +357,19 @@ import { useScorer } from "../composables/useScorer.js";
 const { catWeights } = useScorer();
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || "/api" });
 
+// --- Navigation experiment flags & thresholds ---
+const NAV_EXPERIMENT_ON = true;
+
+const PATH_TOL = 10;               // meters: consider "on the path" if ≤ this
+const DEVIATION_THRESHOLD = 30;    // meters: show Off Route if > this (reroute later)
+
+const ARRIVAL_RADIUS = 12;       // meters remaining along path to count as arrived
+const ARRIVAL_DEBOUNCE_S = 1;    // seconds of sustained proximity
+
+
+const arrivalCandidateStartedAt = ref(null);
+const poiIndexChangeReason = ref('auto'); // 'auto' | 'manual'
+
 /* ---------------- state ---------------- */
 const timeMin = ref(60);
 const radius = ref(700);
@@ -465,6 +478,101 @@ function poiKey(p) {
   return r.stops.some(s => poiKey(s) === k);
 }**/
 
+
+// ----- Geometry helpers for accurate path snapping -----
+
+// Fast local projection (meters) using equirectangular approx around a ref lat
+function _toXY(lat, lon, refLat) {
+  const R = 6371000; // m
+  const phi = refLat * Math.PI / 180;
+  const x = (lon * Math.PI / 180) * Math.cos(phi) * R;
+  const y = (lat * Math.PI / 180) * R;
+  return [x, y];
+}
+
+// Build cumulative meters per vertex and segment lengths for a polyline of [lat,lon]
+function buildCumMeasures(polyLatLon) {
+  const n = Array.isArray(polyLatLon) ? polyLatLon.length : 0;
+  const cum = new Array(n).fill(0);
+  const segLen = new Array(Math.max(n - 1, 0)).fill(0);
+  if (n <= 1) return { cum, segLen };
+
+  const refLat = polyLatLon[0][0];
+  let prev = _toXY(polyLatLon[0][0], polyLatLon[0][1], refLat);
+  for (let i = 1; i < n; i++) {
+    const cur = _toXY(polyLatLon[i][0], polyLatLon[i][1], refLat);
+    const dx = cur[0] - prev[0];
+    const dy = cur[1] - prev[1];
+    const d = Math.hypot(dx, dy);
+    segLen[i - 1] = d;
+    cum[i] = cum[i - 1] + d;
+    prev = cur;
+  }
+  return { cum, segLen };
+}
+
+// Project a point to the closest point on the polyline (segment-wise, clamped)
+// Returns: { snappedLat, snappedLon, distanceToPath_m, measure_m, segIndex, t }
+function projectToPolyline(pointLatLon, polyLatLon, cum, segLen) {
+  const n = Array.isArray(polyLatLon) ? polyLatLon.length : 0;
+  if (n === 0) {
+    return {
+      snappedLat: pointLatLon[0], snappedLon: pointLatLon[1],
+      distanceToPath_m: Infinity, measure_m: 0, segIndex: -1, t: 0
+    };
+  }
+  if (n === 1) {
+    // Snap to the only vertex
+    const [pLat, pLon] = pointLatLon;
+    const [vLat, vLon] = polyLatLon[0];
+    const d = haversineDistance(pLat, pLon, vLat, vLon);
+    return {
+      snappedLat: vLat, snappedLon: vLon,
+      distanceToPath_m: d, measure_m: 0, segIndex: 0, t: 0
+    };
+  }
+
+  const refLat = polyLatLon[0][0];
+  const [px, py] = _toXY(pointLatLon[0], pointLatLon[1], refLat);
+
+  let best = { dist2: Infinity, segIndex: 0, t: 0, sx: 0, sy: 0 };
+  let ax = 0, ay = 0, bx = 0, by = 0;
+
+  // Iterate segments i:(Vi -> Vi+1)
+  for (let i = 0; i < n - 1; i++) {
+    if (segLen[i] === 0) continue;
+
+    if (i === 0) {
+      [ax, ay] = _toXY(polyLatLon[0][0], polyLatLon[0][1], refLat);
+    } else {
+      ax = bx; ay = by;
+    }
+    [bx, by] = _toXY(polyLatLon[i + 1][0], polyLatLon[i + 1][1], refLat);
+
+    const vx = bx - ax, vy = by - ay;
+    const v2 = vx * vx + vy * vy;
+    let t = ((px - ax) * vx + (py - ay) * vy) / v2;
+    t = Math.max(0, Math.min(1, t));
+    const sx = ax + t * vx, sy = ay + t * vy;
+    const dx = px - sx, dy = py - sy;
+    const dist2 = dx * dx + dy * dy;
+
+    if (dist2 < best.dist2) best = { dist2, segIndex: i, t, sx, sy };
+  }
+
+  // Convert snapped back to lat/lon
+  const snappedLat = (best.sy / 6371000) * (180 / Math.PI);
+  const snappedLon = (best.sx / (6371000 * Math.cos(refLat * Math.PI / 180))) * (180 / Math.PI);
+  const distanceToPath_m = Math.sqrt(best.dist2);
+
+  // Along-path measure = cum at seg start + t * segLen
+  const measure_m = (cum[best.segIndex] || 0) + best.t * (segLen[best.segIndex] || 0);
+
+  return { snappedLat, snappedLon, distanceToPath_m, measure_m, segIndex: best.segIndex, t: best.t };
+}
+
+//____________________________________________________________________________________________
+
 // Haversine distance calculation (in meters)
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000; // Earth radius in meters
@@ -490,6 +598,21 @@ const currentNavInfo = computed(() => {
   const legIndex = Math.max(0, Math.min(currentNavLegIndex.value, navLegs.length - 1));
   
   // Get the leg information
+  try {
+    const legs = confirmedRoute.value?.navigation_legs || [];
+    for (const leg of legs) {
+      if (Array.isArray(leg?.coords_latlon) && leg.coords_latlon.length >= 1) {
+        const { cum, segLen } = buildCumMeasures(leg.coords_latlon);
+        leg._cum = cum;
+        leg._segLen = segLen;
+      } else {
+        leg._cum = []; 
+        leg._segLen = [];
+      }
+    }
+  } catch (e) {
+    console.warn('cum/seg precompute failed', e);
+  }
   const leg = navLegs[legIndex];
   if (!leg) return null;
   
@@ -499,47 +622,42 @@ const currentNavInfo = computed(() => {
   const nextStop = stops[nextStopIndex];
   const nextStopName = nextStop?.name || `Stop ${nextStopIndex + 1}`;
   
-  // Find the closest point on the leg's path to user's current position
-  // and detect deviation from route
-  let minDistToPath = Infinity;
-  let closestPointIndex = 0;
+  let deviationFromRoute = Infinity;
   let traveledDistance = 0;
-  let deviationFromRoute = 0;
-  const DEVIATION_THRESHOLD = 50; // meters - consider "on route" if within this
-  
-  if (leg.coords_latlon && leg.coords_latlon.length > 0) {
-    // Find closest point on route path
+  let nearestRoutePoint = null;
+
+  if (Array.isArray(leg.coords_latlon) && leg.coords_latlon.length > 0 && NAV_EXPERIMENT_ON) {
+    const { snappedLat, snappedLon, distanceToPath_m, measure_m } =
+      projectToPolyline([currentLat, currentLon], leg.coords_latlon, leg._cum || [], leg._segLen || []);
+
+    deviationFromRoute = distanceToPath_m;
+    traveledDistance   = measure_m;
+    nearestRoutePoint  = [snappedLat, snappedLon];
+  } else {
+    // fallback to old vertex-nearest behavior
+    let minDist = Infinity, idx = 0;
     for (let i = 0; i < leg.coords_latlon.length; i++) {
-      const [pathLat, pathLon] = leg.coords_latlon[i];
-      const distToPoint = haversineDistance(currentLat, currentLon, pathLat, pathLon);
-      if (distToPoint < minDistToPath) {
-        minDistToPath = distToPoint;
-        closestPointIndex = i;
-      }
+      const [plat, plon] = leg.coords_latlon[i];
+      const d = haversineDistance(currentLat, currentLon, plat, plon);
+      if (d < minDist) { minDist = d; idx = i; }
     }
-    
-    deviationFromRoute = minDistToPath; // Distance in meters from route
-    
-    // Calculate distance along path from start to closest point
-    for (let i = 1; i <= closestPointIndex && i < leg.coords_latlon.length; i++) {
+    deviationFromRoute = minDist;
+    // coarse cumulative
+    for (let i = 1; i <= idx && i < leg.coords_latlon.length; i++) {
       const [lat1, lon1] = leg.coords_latlon[i - 1];
       const [lat2, lon2] = leg.coords_latlon[i];
       traveledDistance += haversineDistance(lat1, lon1, lat2, lon2);
     }
+    nearestRoutePoint = leg.coords_latlon[idx] || null;
   }
-  
-  // Store closest point on route for visual indicator
-  let nearestRoutePoint = null;
-  if (leg.coords_latlon && leg.coords_latlon.length > 0 && closestPointIndex < leg.coords_latlon.length) {
-    nearestRoutePoint = leg.coords_latlon[closestPointIndex];
-  }
+    
   
   // Calculate remaining distance to next stop
   // If on-route (within threshold), use route-based distance; otherwise use direct distance
   let remainingDistance = leg.distance_m;
   
   if (leg.coords_latlon && leg.coords_latlon.length > 0 && nextStop) {
-    if (deviationFromRoute <= DEVIATION_THRESHOLD) {
+    if (deviationFromRoute <= PATH_TOL) {
       // On route: calculate remaining distance along route
       let remainingRouteDistance = leg.distance_m - traveledDistance;
       // Cap at direct distance * 1.3 to prevent unrealistic values
@@ -569,7 +687,7 @@ const currentNavInfo = computed(() => {
       
       // If we haven't reached this step yet, and it's a turn
       // Only show turns when on-route (within threshold) to avoid confusing instructions
-      if (cumulativeDistance > traveledDistance && step.maneuver && deviationFromRoute <= DEVIATION_THRESHOLD) {
+      if (cumulativeDistance > traveledDistance && step.maneuver && deviationFromRoute <= PATH_TOL) {
         // Maneuver can be "type:modifier" format from backend (e.g., "turn:left", "new name:", "roundabout:left")
         const maneuverStr = typeof step.maneuver === 'string' 
           ? step.maneuver.toLowerCase() 
@@ -690,6 +808,10 @@ const currentNavInfo = computed(() => {
     deviationFromRoute: Math.round(deviationFromRoute), // Distance in meters from route path
     isOffRoute: deviationFromRoute > DEVIATION_THRESHOLD, // True if significantly off-route
     nearestRoutePoint: nearestRoutePoint, // [lat, lon] of nearest point on route (for visual indicator)
+
+    onPath: deviationFromRoute <= PATH_TOL,
+    traveledDistance_m: Math.max(0, Math.round(traveledDistance)),
+    legDistance_m: Math.max(0, Math.round(leg.distance_m || 0)),
   };
 });
 
@@ -1254,6 +1376,7 @@ async function loadPois() {
   };
 
   const { data } = await api.post("/api/pois", payload);
+  //const { data } = await api.post("/pois", payload);
 
   if (poiCluster) poiCluster.remove();
   poiCluster = L.markerClusterGroup({
@@ -1379,6 +1502,7 @@ function confirmRoute() {
         if (!isRoutePlanningMode.value && map) {
           map.panTo(pos);
         }
+        evaluateArrival();
       });
     } else {
       currentLocationMarker.setLatLng(startPos);
@@ -1405,6 +1529,7 @@ function prevPoi() {
   if (currentPoiIndex.value > 0) {
     currentPoiIndex.value--;
     // updateRoutePoiMarkers() and zoomToCurrentPoi() are handled by the watcher
+    poiIndexChangeReason.value = 'manual';
   }
 }
 
@@ -1412,6 +1537,7 @@ function nextPoi() {
   if (confirmedRoute.value && currentPoiIndex.value < confirmedRoute.value.stops.length - 1) {
     currentPoiIndex.value++;
     // updateRoutePoiMarkers() and zoomToCurrentPoi() are handled by the watcher
+    poiIndexChangeReason.value = 'manual';
   }
 }
 
@@ -1520,6 +1646,7 @@ async function buildTour() {
     };
 
     const { data } = await api.post("/api/tour", payload);
+    //const { data } = await api.post("/tour", payload);
 
     // Map backend route POIs to stops (start, poi..., [end]) with real details
     const routePois = Array.isArray(data.route_pois) ? data.route_pois : [];
@@ -1777,35 +1904,47 @@ watch(currentNavInfo, (navInfo) => {
 }, { immediate: true });
 
 // Watch GPS position and advance leg index when user reaches destination stop
-watch(currentGPSPosition, (pos) => {
+/* watch(currentGPSPosition, (pos) => {
   if (!pos || !confirmedRoute.value || isRoutePlanningMode.value) return;
-  
-  const stops = confirmedRoute.value.stops || [];
-  const navLegs = confirmedRoute.value.navigation_legs || [];
-  
-  if (stops.length === 0 || navLegs.length === 0) return;
-  
-  const [currentLat, currentLon] = pos;
-  const currentLegIndex = currentNavLegIndex.value;
-  
-  // Check if we've reached the destination stop of the current leg
-  // The destination stop for leg i is stop i+1
-  if (currentLegIndex + 1 < stops.length) {
-    const destinationStop = stops[currentLegIndex + 1];
-    const distanceToDestination = haversineDistance(
-      currentLat, currentLon,
-      destinationStop.lat, destinationStop.lon
-    );
-    
-    // Advance to next leg when within 50 meters of destination
-    const THRESHOLD_DISTANCE = 50; // meters
-    if (distanceToDestination < THRESHOLD_DISTANCE && currentLegIndex < navLegs.length - 1) {
-      currentNavLegIndex.value = currentLegIndex + 1;
-      // Automatically switch the bottom sheet to show the arrived-at stop
-      currentPoiIndex.value = currentLegIndex + 1;
+
+  const navInfo = currentNavInfo.value;
+  if (!navInfo) return;
+
+  const now = Date.now() / 1000;
+  const { onPath, traveledDistance_m, legDistance_m } = navInfo;
+
+  // meters remaining ALONG the path to the current leg's destination
+  const alongLeft = Math.max(0, (legDistance_m || 0) - (traveledDistance_m || 0));
+
+  if (onPath && alongLeft <= ARRIVAL_RADIUS) {
+    // inside arrival zone while on the route – start/continue debounce window
+    if (!arrivalCandidateStartedAt.value) arrivalCandidateStartedAt.value = now;
+    const elapsed = now - arrivalCandidateStartedAt.value;
+
+    if (elapsed >= ARRIVAL_DEBOUNCE_S) {
+      // ✅ arrived: advance leg/poi if possible
+
+      const legs = confirmedRoute.value.navigation_legs || [];
+      if (currentNavLegIndex.value < legs.length - 1) {
+        poiIndexChangeReason.value = 'auto';
+        currentNavLegIndex.value += 1;
+        currentPoiIndex.value = Math.min(
+          currentPoiIndex.value + 1,
+          (confirmedRoute.value.stops?.length || 1) - 1
+        );
+      } else {
+        // last leg finished; you could show a “Route complete” toast/banner here
+        toast("🎉 Route complete!");
+      }
+      arrivalCandidateStartedAt.value = null;
     }
+  } else {
+    // left the arrival zone or off-path → reset debounce
+    arrivalCandidateStartedAt.value = null;
   }
-}, { immediate: false });
+}); */
+
+watch(currentGPSPosition, evaluateArrival);
 
 // Watch for changes in currentPoiIndex and automatically zoom/pan to that stop
 // This works both when manually switching stops AND when automatically arriving at a stop
@@ -1822,9 +1961,10 @@ watch(currentPoiIndex, (newIndex, oldIndex) => {
     updateRoutePoiMarkers();
     zoomToCurrentPoi();
     
+    const isManualJump = poiIndexChangeReason.value === 'manual';
     // If manually switching stops (not auto-arrival), move the GPS marker to simulate position
     // Only do this if the index actually changed (avoid on initial mount)
-    if (oldIndex !== undefined && oldIndex !== null && newIndex !== oldIndex && currentLocationMarker) {
+    if (oldIndex !== undefined && oldIndex !== null && newIndex !== oldIndex && currentLocationMarker && isManualJump) {
       const stop = confirmedRoute.value.stops[newIndex];
       if (stop) {
         // Set manual mode temporarily to prevent GPS from overriding
@@ -1846,10 +1986,42 @@ watch(currentPoiIndex, (newIndex, oldIndex) => {
         
         // Note: We keep manual mode active so user can see the simulation
         // They can reset to actual GPS when ready
+
       }
     }
   }
+  poiIndexChangeReason.value = 'auto';
 }, { immediate: false });
+
+
+
+function evaluateArrival() {
+  if (!confirmedRoute.value || isRoutePlanningMode.value) return;
+
+  const navInfo = currentNavInfo.value;
+  if (!navInfo) return;
+
+  const now = Date.now() / 1000;
+  const { onPath, traveledDistance_m, legDistance_m } = navInfo;
+  const alongLeft = Math.max(0, (legDistance_m || 0) - (traveledDistance_m || 0));
+
+  if (onPath && alongLeft <= ARRIVAL_RADIUS) {
+    if (!arrivalCandidateStartedAt.value) arrivalCandidateStartedAt.value = now;
+    const elapsed = now - arrivalCandidateStartedAt.value;
+    if (elapsed >= ARRIVAL_DEBOUNCE_S) {
+      const legs = confirmedRoute.value.navigation_legs || [];
+      if (currentNavLegIndex.value < legs.length - 1) {
+        currentNavLegIndex.value += 1;
+        currentPoiIndex.value = Math.min(currentPoiIndex.value + 1, (confirmedRoute.value.stops?.length || 1) - 1);
+      } else {
+        toast("🎉 Route complete!");
+      }
+      arrivalCandidateStartedAt.value = null;
+    }
+  } else {
+    arrivalCandidateStartedAt.value = null;
+  }
+}
 
 function updateCurrentLegHighlight(navInfo) {
   // Remove existing highlight
