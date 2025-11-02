@@ -281,15 +281,22 @@
 
           <!-- MAIN CONTROLS -->
           <div class="dense-grid">
-            <!-- Time -->
+            <!-- Time temp -->
             <div class="panel-section compact">
-              <label class="label">Time</label>
-              <div class="slider-row cardish compact">
-                <span class="icon">🕒</span>
-                <input type="range" v-model.number="timeMin" min="10" max="180" step="5" class="horizontal-slider slim" />
-                <span class="slider-value">{{ (timeMin / 60).toFixed(1) }} h</span>
+              <div class="time-card time-compact cardish compact">
+                <div class="time-header">
+                  <span class="time-title-compact">Select <strong>End Time:</strong></span>
+                  <input type="time" class="time-time large" v-model="endTimeStr" step="300" />
+                </div>
+
+                <div class="time-subline">
+                  <span>Start {{ startTimeStr }}</span>
+                  <span>•</span>
+                  <span>{{ durationPretty }}</span>
+                </div>
               </div>
             </div>
+
 
             <!-- Trip mode -->
             <div class="row-two compact radio-group">
@@ -2413,6 +2420,43 @@ function stopNavigationTracking() {
     deviationLineLayer = null;
   }
 }
+
+const startAt = ref(new Date()); // or your preferred start time
+if (!timeMin.value || timeMin.value <= 0) timeMin.value = 60; // default 1h
+
+// Helpers
+const pad2 = n => String(n).padStart(2,'0');
+const hhmm = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const addMin = (d,m) => new Date(d.getTime() + m * 60000);
+
+const startTimeStr = computed(() => hhmm(startAt.value));
+
+// Pretty duration output
+const durationPretty = computed(() => {
+  const m = Math.max(0, timeMin.value || 0);
+  const h = Math.floor(m/60), r = m%60;
+  if (h && r) return `${h}h ${r}m`;
+  if (h) return `${h}h`;
+  return `${r}m`;
+});
+
+// End time <-> duration
+const endTimeStr = computed({
+  get() {
+    const end = addMin(startAt.value, timeMin.value || 0);
+    return hhmm(end);
+  },
+  set(hhmmStr) {
+    const [H, M] = (hhmmStr || '').split(':').map(n => parseInt(n, 10));
+    if (Number.isFinite(H) && Number.isFinite(M)) {
+      const end = new Date(startAt.value);
+      end.setHours(H, M, 0, 0);
+      if (end < startAt.value) end.setDate(end.getDate() + 1); // next day
+      timeMin.value = Math.max(0, Math.round((end - startAt.value) / 60000));
+    }
+  }
+});
+
 </script>
 
 <style>
@@ -3736,4 +3780,37 @@ html, body, #app {
 .categories-line { margin-top: 1px; line-height: 1.18; }
 .views { line-height: 1.18; }
 
+/* Compact card spacing */
+.time-card.time-compact { padding: 8px 10px; gap: 6px; }
+
+/* Title + input on one row */
+.time-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto; /* title | flex | input */
+  align-items: center;
+  gap: 8px;
+}
+
+/* Keep sizes; just tighter line height */
+.time-title-compact { font-size: .95rem; font-weight: 800; line-height: 1.1; }
+
+/* Keep input size, but no extra margins */
+.time-time.large {
+  font-size: 1.05rem;
+  font-weight: 800;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: none;
+  margin: 0;
+}
+
+/* Tight summary line */
+.time-subline {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  font-size: .85rem;
+  opacity: .9;
+  margin-top: 2px;
+}
 </style>
