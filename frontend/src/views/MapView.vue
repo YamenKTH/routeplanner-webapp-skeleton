@@ -362,6 +362,8 @@ const NAV_EXPERIMENT_ON = true;
 
 const PATH_TOL = 10;               // meters: consider "on the path" if ≤ this
 const DEVIATION_THRESHOLD = 30;    // meters: show Off Route if > this (reroute later)
+const ON_PATH_FOR_DISTANCE_TOL = DEVIATION_THRESHOLD; // 30 m is a good start
+
 
 const ARRIVAL_RADIUS = 12;       // meters remaining along path to count as arrived
 const ARRIVAL_DEBOUNCE_S = 1;    // seconds of sustained proximity
@@ -657,20 +659,20 @@ const currentNavInfo = computed(() => {
   let remainingDistance = leg.distance_m;
   
   if (leg.coords_latlon && leg.coords_latlon.length > 0 && nextStop) {
-    if (deviationFromRoute <= PATH_TOL) {
-      // On route: calculate remaining distance along route
-      let remainingRouteDistance = leg.distance_m - traveledDistance;
-      // Cap at direct distance * 1.3 to prevent unrealistic values
-      const directDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
-      remainingDistance = Math.max(0, Math.min(remainingRouteDistance, directDistance * 1.3));
+    const directDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
+    if (deviationFromRoute <= ON_PATH_FOR_DISTANCE_TOL) {
+      // Prefer along-route distance while we’re reasonably close to the path
+      const remainingRouteDistance = Math.max(0, (leg.distance_m || 0) - (traveledDistance || 0));
+      remainingDistance = remainingRouteDistance;
     } else {
-      // Off route: use direct distance (you're not on the planned path)
-      remainingDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
+      // Far from path → fall back to straight-line until we re-snap / reroute
+      remainingDistance = directDistance;
     }
   } else if (nextStop) {
-    // Fallback: use direct distance if no route coordinates
-    remainingDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
-  }
+     // Fallback: use direct distance if no route coordinates
+     remainingDistance = haversineDistance(currentLat, currentLon, nextStop.lat, nextStop.lon);
+   }
+    
   
   // Find the next turn/step based on user's position
   let nextTurn = null;
@@ -687,7 +689,7 @@ const currentNavInfo = computed(() => {
       
       // If we haven't reached this step yet, and it's a turn
       // Only show turns when on-route (within threshold) to avoid confusing instructions
-      if (cumulativeDistance > traveledDistance && step.maneuver && deviationFromRoute <= PATH_TOL) {
+      if (cumulativeDistance > traveledDistance && step.maneuver && deviationFromRoute <= ON_PATH_FOR_DISTANCE_TOL) {
         // Maneuver can be "type:modifier" format from backend (e.g., "turn:left", "new name:", "roundabout:left")
         const maneuverStr = typeof step.maneuver === 'string' 
           ? step.maneuver.toLowerCase() 
