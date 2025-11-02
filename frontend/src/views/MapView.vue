@@ -307,14 +307,14 @@
 
             <!-- Advanced toggle in mid state -->
             <button v-if="sheetState==='mid'" class="adv-toggle" @click="sheetState='expanded'">
-              Advanced settings
+              Customize more
             </button>
           </div>
 
           <!-- ADVANCED -->
           <transition name="fade">
             <div v-if="sheetState==='expanded'" class="advanced-box">
-              <h4>Advanced settings</h4>
+              <h4>Customize more</h4>
               <!-- Radius -->
               <div class="panel-section compact">
                 <label class="label">Radius</label>
@@ -3246,25 +3246,61 @@ html, body, #app {
   to { transform: rotate(360deg); }
 }
 
-/* Advanced */
+
+/* Advanced QUITE OK HONSETLY. NOT GOOD LOOKING; BUT OK.*/
 .adv-toggle {
-  background: transparent;
-  border: none;
-  color: #d9e6ff;
-  font-size: .9rem;
-  text-decoration: underline;
-  cursor: pointer;
-  justify-self: start;
-  margin-bottom: 6px;
+  background: linear-gradient(135deg, rgba(106, 92, 255, 0.25), rgba(176, 108, 255, 0.2));
+  color: #f8f8ff;
+  border: 1px solid rgba(176, 108, 255, 0.45);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  box-shadow: 0 3px 10px rgba(106, 92, 255, 0.25);
+  transition: all 0.18s ease;
 }
 
+.adv-toggle::before {
+  content: "⚙️✨";
+  font-size: 1.1em;
+}
+
+.adv-toggle::after {
+  content: "▼";
+  font-size: 0.8em;
+  opacity: 0.85;
+  margin-left: 4px;
+  transform: translateY(1px);
+}
+
+.adv-toggle:hover {
+  background: linear-gradient(135deg, rgba(106, 92, 255, 0.35), rgba(176, 108, 255, 0.28));
+  border-color: rgba(176, 108, 255, 0.65);
+  box-shadow: 0 4px 14px rgba(106, 92, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+/* Advanced panel — slightly more defined, harmonious */
 .advanced-box {
   margin-top: 10px;
   margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid rgba(106, 92, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(106, 92, 255, 0.08);
 }
 
 .advanced-box h4 {
-  margin: 0 0 6px 2px;
+  margin: 0 0 8px 2px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #c6b6ff;
 }
 
 /* Vertical actions */
