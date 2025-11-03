@@ -140,10 +140,14 @@
                   {{ currentPoiName }}
                 </div>
               </div>
-              <div class="poi-quick-actions">
+
+              <!-- Actions: now together -->
+              <div class="poi-quick-actions tight">
                 <button class="action primary" @click="onImHereClick">✅ I’m here</button>
+                <button class="action danger"  @click="cancelNavigation">Cancel</button>
               </div>
             </template>
+
 
             <!-- B) Old (visited) stop: FULL TEXT -->
             <template v-else-if="visitedIdx.has(currentPoiIndex)">
@@ -182,7 +186,7 @@
               </h4>
               <div class="poi-details">
                 <div class="poi-info" v-if="currentPoiDetails">
-                  <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
+                  <!--<div class="poi-categories">{{ currentPoiDetails.categories }}</div>-->
                   <div class="poi-description">{{ currentPoiDetails.description }}</div>
                 </div>
               </div>
@@ -198,7 +202,7 @@
           </div>
 
           <!-- Keep: Cancel Navigation -->
-          <button class="cancel-nav-btn" @click="cancelNavigation">
+          <button v-if="isArrived" class="cancel-nav-btn" @click="cancelNavigation">
             Cancel Navigation
           </button>
         </div>
@@ -4223,4 +4227,26 @@ html, body, #app {
 
 .peek-label{ color: #0b1220; }
 
+
+
+.poi-quick-actions.tight {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* equal width buttons */
+  gap: 8px;
+}
+
+/* a bit smaller than big destructive footer button */
+.poi-quick-actions.tight .action {
+  padding: 10px;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+/* optional: lighter cancel look if you prefer */
+.action.danger.ghost {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 99, 132, 0.5);
+  color: #ffd7e0;
+}
 </style>
