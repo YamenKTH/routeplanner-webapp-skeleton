@@ -22,7 +22,11 @@
         <!-- ARRIVED -->
         <template v-if="isArrived">
           <div class="nav-distance-main">
-            <div class="nav-destination">You've arrived at {{ currentPoiName }}</div>
+            <div class="nav-destination">You've arrived at {{ arrivedPoiName }}</div>
+            <div v-if="navMode==='arrived' && arrivedAtIndex !== null && currentPoiIndex !== arrivedAtIndex"
+                class="nav-subline">
+              Viewing: {{ currentPoiName }}
+            </div>
           </div>
         </template>
 
@@ -106,13 +110,13 @@
       <!-- Drag handle + Skip button -->
       <div class="sheet-handle-area" @pointerdown="onPointerDown">
         <!-- Skip stop (top-left corner, always visible when in route view) -->
+        <!-- Skip stop (top-left corner) -->
         <button
-          v-if="confirmedRoute && !isRoutePlanningMode && !selectedPoi"
+          v-if="confirmedRoute && !isRoutePlanningMode"
           class="skip-stop-btn"
-          @click.stop
+          @click.stop="onSkipStop"
           @pointerdown.stop
-          title="(Coming soon) Skip this stop"
-          disabled
+          title="Skip this stop (preview)"
         >
           Skip stop
         </button>
@@ -508,6 +512,16 @@ const poiIndexChangeReason = ref('auto'); // 'auto' | 'manual'
 const autoAdvanceEnabled = ref(true); // toggle if you ever want to disable auto-advance
 //checkpoint!!!!!!
 
+const arrivedAtIndex = ref(null);
+
+const arrivedPoiName = computed(() => {
+  const idx = (navMode.value === 'arrived' && arrivedAtIndex.value != null)
+    ? arrivedAtIndex.value
+    : currentPoiIndex.value;
+  const stop = confirmedRoute.value?.stops?.[idx];
+  return stop?.name || (Number.isFinite(idx) ? `Stop ${idx + 1}` : '');
+});
+
 const _walkProbe = ref({
   active: false,
   prevDist: null,
@@ -521,6 +535,10 @@ const showCancelConfirm = ref(false);
 function doConfirmCancel() {
   showCancelConfirm.value = false;
   cancelNavigation();
+}
+
+function onSkipStop() {
+  toast('⏭️ Skip stop (coming soon)');
 }
 
 
@@ -709,6 +727,7 @@ function markArrived(manual) {
   s.add(currentPoiIndex.value);
   visitedIdx.value = s;
   navMode.value = 'arrived';
+  arrivedAtIndex.value = currentPoiIndex.value; 
 
   // reset walk probe and start depart probe
   _walkProbe.value   = { active: false, prevDist: null, improvingTicks: 0, basePos: null, baseDist: null };
@@ -733,8 +752,10 @@ function startNavigatingTo(index) {
   }
 
   navMode.value = 'navigating';
+  arrivedAtIndex.value = null;  
   _walkProbe.value = { active: false, prevDist: null, improvingTicks: 0, basePos: null, baseDist: null };
 }
+
 function goToNextStop() {
   if (!confirmedRoute.value?.stops?.length) return;
 
