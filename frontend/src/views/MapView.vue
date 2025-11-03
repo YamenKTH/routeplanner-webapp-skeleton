@@ -549,7 +549,7 @@ function doConfirmCancel() {
 }
 
 function onSkipStop() {
-  toast('⏭️ Skip stop (coming soon)');
+  toast('⏭️ Skip stop (implementation coming soon)');
 }
 
 
