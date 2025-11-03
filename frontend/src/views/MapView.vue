@@ -112,26 +112,23 @@
       <div class="sheet-content">
         <!-- ROUTE NAVIGATION VIEW (when route is confirmed) -->
         <div v-if="confirmedRoute && !isRoutePlanningMode && !selectedPoi" class="route-navigation-view">
-
           <!-- Top bar: stats + tiny browse arrows (top-right) -->
+          <!-- Top bar: only show stats while navigating, always keep arrows -->
           <div class="route-summary">
-            <div class="route-stats">
+            <div v-if="!isArrived && currentPoiIndex === destIndex" class="route-stats">
               <span class="stat">📍 {{ confirmedRoute.stops.length }} stops</span>
               <span class="stat">📏 {{ confirmedRoute.distance }} km</span>
               <span class="stat">🕒 {{ confirmedRoute.time }}</span>
             </div>
 
-            <!-- Tiny arrows in top-right -->
             <div class="poi-browse-controls">
               <button class="browse-btn" @click="prevPoi" :disabled="currentPoiIndex === 0">◀</button>
               <button class="browse-btn" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">▶</button>
             </div>
           </div>
 
-          <!-- NAVIGATING: sneak peek of NEXT stop + "I'm here" -->
-          <div v-if="!isArrived" class="nav-mode navigating">
-
-            <!-- A) Current destination: LIMITED -->
+          <!-- ✨ New combined logic -->
+          <div v-if="!isArrivedView" class="nav-mode navigating">
             <template v-if="currentPoiIndex === destIndex">
               <div class="next-peek">
                 <div class="peek-label">Current destination</div>
@@ -141,70 +138,66 @@
                 </div>
               </div>
 
-              <!-- Actions: now together -->
               <div class="poi-quick-actions tight">
+                <button class="action danger" @click="showCancelConfirm = true">Cancel</button>
                 <button class="action primary" @click="onImHereClick">✅ I’m here</button>
-                <button class="action danger"  @click="cancelNavigation">Cancel</button>
               </div>
             </template>
-
-
-            <!-- B) Old (visited) stop: FULL TEXT -->
-            <template v-else-if="visitedIdx.has(currentPoiIndex)">
-              <div class="current-poi-card">
-                <h4 :style="{ opacity: 0.6 }">{{ currentPoiName }}</h4>
-                <div class="poi-details">
-                  <div class="poi-info" v-if="currentPoiDetails">
-                    <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
-                    <div class="poi-description">{{ currentPoiDetails.description }}</div>
-                  </div>
-                </div>
-                <!-- no Next button here (still in navigating mode) -->
-              </div>
-            </template>
-
-            <!-- C) Future stop (after destination): FULL TEXT -->
-            <template v-else>
-              <div class="current-poi-card">
-                <h4>{{ currentPoiName }}</h4>
-                <div class="poi-details">
-                  <div class="poi-info" v-if="currentPoiDetails">
-                    <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
-                    <div class="poi-description">{{ currentPoiDetails.description }}</div>
-                  </div>
-                </div>
-              </div>
-            </template>
-
           </div>
 
-          <!-- ARRIVED: full current POI + "Next stop →" -->
+          <!-- ARRIVED or browsing -->
           <div v-else class="nav-mode arrived">
-            <div class="current-poi-card">
-              <h4 :style="{ opacity: 1 }">
-                {{ currentPoiName }}
-              </h4>
-              <div class="poi-details">
-                <div class="poi-info" v-if="currentPoiDetails">
-                  <!--<div class="poi-categories">{{ currentPoiDetails.categories }}</div>-->
-                  <div class="poi-description">{{ currentPoiDetails.description }}</div>
+            <div class="arrived-card" :class="{ expanded: arrivedShowFullExtract }">
+              <div class="arrived-header">
+                <h4 class="arrived-title">{{ currentPoiName }}</h4>
+              </div>
+
+              <div class="arrived-scroll">
+                <div class="arrived-extract" :class="{ clamped: arrivedShouldClamp && !arrivedShowFullExtract }">
+                  {{ (currentPoiDetails && currentPoiDetails.description) || 'No description available.' }}
+                </div>
+
+                <!-- Inline actions -->
+                <div class="arrived-inline-actions">
+                  <template v-if="arrivedShouldClamp">
+                    <button class="text-link" @click="arrivedShowFullExtract = !arrivedShowFullExtract">
+                      {{ arrivedShowFullExtract ? 'Show less' : 'Read more' }}
+                    </button>
+                  </template>
+
+                  <template v-if="currentPoiDetails && currentPoiDetails.wv && currentPoiDetails.wv.project && currentPoiDetails.wv.title">
+                    <span class="sep" v-if="arrivedShouldClamp">•</span>
+                    <a
+                      class="text-link"
+                      :href="`https://${currentPoiDetails.wv.project}/wiki/${currentPoiDetails.wv.title}`"
+                      target="_blank"
+                    >Open article</a>
+                  </template>
                 </div>
               </div>
-              <div class="poi-navigation-footer">
-                <button
-                  class="nav-btn next"
-                  @click="onArrivedPrimaryAction"
-                  :disabled="currentPoiIndex !== furthestVisitedIndex">
-                  {{ currentPoiIndex === confirmedRoute.stops.length - 1 ? 'End tour' : 'Next stop →' }}
-                </button>
+
+              <!-- Footer -->
+              <div class="arrived-footer safer">
+                <div class="footer-buttons">
+                  <button
+                    class="nav-btn next primary"
+                    @click="onArrivedPrimaryAction"
+                    :disabled="currentPoiIndex !== furthestVisitedIndex"
+                  >
+                    {{ currentPoiIndex === confirmedRoute.stops.length - 1 ? 'End tour' : 'Next stop →' }}
+                  </button>
+
+                  <button class="nav-btn cancel subtle" @click="showCancelConfirm = true">
+                    Cancel navigation
+                  </button>
+                </div>
               </div>
+
             </div>
           </div>
 
-          <!-- Keep: Cancel Navigation -->
-          <button v-if="isArrived" class="cancel-nav-btn" @click="cancelNavigation">
-            Cancel Navigation
-          </button>
+          <!-- Cancel Navigation button -->
+          
         </div>
         
         <!-- POI DETAILS VIEW (opens when a map marker is clicked) -->
@@ -443,6 +436,19 @@
             {{ isGenerating ? "Building..." : "Generate Route" }}
           </button>
         </div>
+
+
+        <!-- Cancel confirmation -->
+        <div v-if="showCancelConfirm" class="confirm-overlay" @click.self="showCancelConfirm = false">
+          <div class="confirm-card">
+            <div class="confirm-title">Cancel navigation?</div>
+            <div class="confirm-text">You’ll exit the route and return to planning.</div>
+            <div class="confirm-actions">
+              <button class="btn-danger" @click="doConfirmCancel">Yes, cancel</button>
+              <button class="btn-ghost" @click="showCancelConfirm = false">Keep navigating</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -479,7 +485,7 @@ const arrivalCandidateStartedAt = ref(null);
 const poiIndexChangeReason = ref('auto'); // 'auto' | 'manual'
 
 const autoAdvanceEnabled = ref(true); // toggle if you ever want to disable auto-advance
-
+//checkpoint!!!!!!
 
 const _walkProbe = ref({
   active: false,
@@ -489,12 +495,26 @@ const _walkProbe = ref({
   baseDist: null,
 });
 
+const showCancelConfirm = ref(false);
+
+function doConfirmCancel() {
+  showCancelConfirm.value = false;
+  cancelNavigation();
+}
+
 
 // --- New tour state (JS) ---
 const navMode = ref('navigating');      // 'navigating' or 'arrived'
 const visitedIdx = ref(new Set());      // Set of visited stop indexes
 
 const isArrived = computed(() => navMode.value === 'arrived');
+
+const isArrivedView = computed(() => {
+  // Show the "arrived-style" layout if we've arrived OR if we're browsing future/previous stops
+  if (navMode.value === 'arrived') return true;
+  if (!confirmedRoute.value?.stops?.length) return false;
+  return currentPoiIndex.value !== destIndex.value; // browsing others
+});
 
 //auto advance:
 const _departProbe = ref({
@@ -736,6 +756,22 @@ const selectedEndStart = ref(false); // New state to track if we're selecting be
 const selectedPoi = ref(null);  // NEW STATE: When we have selected a POI and want to read about it. 
 const showFullExtract = ref(false);
 const shouldClamp = computed(() => (selectedPoi.value?.extractFull?.length || 0) > 300);
+
+
+// Arrived card state (for the popup-like arrived view)
+const arrivedShowFullExtract = ref(false);
+
+// Current stop object (so we can read .wv for the "Open article" link)
+const currentStop = computed(() =>
+  confirmedRoute.value?.stops?.[currentPoiIndex.value] ?? null
+);
+
+// Clamp long descriptions in the arrived view
+const arrivedShouldClamp = computed(() => {
+  const d = currentStop.value?.description || currentPoiDetails.value?.description || '';
+  return d.length > 260; // tweak threshold if you want
+});
+
 let currentSelectedMarker = null;
 
 
@@ -795,7 +831,9 @@ const currentPoiDetails = computed(() => {
   const stop = confirmedRoute.value.stops[currentPoiIndex.value];
   return {
     categories: stop.categories ? stop.categories.join(', ') : 'No categories',
-    description: stop.description || 'No description available'
+    description: stop.description || 'No description available',
+    wv: stop.wv || null,              // 
+    wiki_url: stop.wiki_url || null,  //store a direct url
   };
 });
 
@@ -2490,6 +2528,8 @@ watch(currentPoiIndex, (newIndex, oldIndex) => {
   poiIndexChangeReason.value = 'auto';
 }, { immediate: false });
 
+watch(currentPoiIndex, () => { arrivedShowFullExtract.value = false; });
+watch(isArrived, (v) => { if (!v) arrivedShowFullExtract.value = false; });
 
 function getActiveRoute() {
   // Prefer the confirmed route when navigating; else show the currently displayed candidate
@@ -4324,4 +4364,200 @@ html, body, #app {
   border: 1px solid rgba(255, 99, 132, 0.5);
   color: #ffd7e0;
 }
+
+
+
+/* Arrived card  */
+.arrived-card{
+  display:grid;
+  grid-template-rows:auto 1fr auto;     /* header / scroll / footer */
+  background: rgba(15, 22, 32, 0.48);
+  border:1px solid rgba(255,255,255,0.25);
+  border-radius:12px;
+  overflow:hidden;
+}
+
+/* Header bar */
+.arrived-header{
+  position:sticky; top:0; z-index:1;
+  display:flex; align-items:center; justify-content:center;
+  padding:8px 16px;
+  background: rgba(15, 22, 32, 0.65);
+  backdrop-filter: blur(6px);
+  border-bottom:1px solid rgba(106, 92, 255, 0.4);
+}
+.arrived-title{
+  margin:0;
+  font-size:1.05rem;
+  font-weight:800;
+  text-align:center;
+}
+
+/* Body */
+.arrived-scroll{
+  padding:10px 12px 14px;
+  overflow-y:auto;
+  max-height: 38vh; /* keeps it compact like the popup */
+}
+.arrived-extract{
+  font-size:.95rem;
+  line-height:1.35;
+  opacity:.95;
+  margin:4px 0 6px;
+}
+.arrived-extract.clamped{
+  display:-webkit-box;
+  -webkit-line-clamp:5;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+
+/* Inline actions (re-uses your .text-link + .sep) */
+.arrived-inline-actions{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+}
+
+/* Footer (docked) */
+.arrived-footer{
+  position:sticky; bottom:0; z-index:1;
+  display:flex; gap:8px;
+  padding:10px 12px 12px;
+  background:linear-gradient(180deg, rgba(15,22,32,0.04), rgba(15,22,32,0.7));
+  border-top:1px solid rgba(255,255,255,0.12);
+}
+.arrived-footer .nav-btn.next.primary{
+  flex:1;
+  background:#6a5cff; color:#fff; border:0;
+  border-radius:8px; padding:10px 12px; font-weight:800;
+}
+.arrived-footer .nav-btn.ghost{
+  background:rgba(255,255,255,0.12);
+  border:1px solid rgba(255,255,255,0.28);
+  color:#eef4ff; border-radius:8px; padding:10px 12px;
+}
+
+
+.arrived-footer.safer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, rgba(15,22,32,0.04), rgba(15,22,32,0.7));
+  border-top: 1px solid rgba(255,255,255,0.12);
+}
+
+.arrived-footer .footer-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-btn.next.primary {
+  flex: 1;
+  background: #6a5cff;
+  color: #fff;
+  font-weight: 700;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  transition: background 0.2s;
+}
+.nav-btn.next.primary:hover {
+  background: #7a6cff;
+}
+
+.nav-btn.cancel.subtle {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #ff7c7c;
+  font-weight: 500;
+  border-radius: 8px;
+  padding: 8px 12px;
+  opacity: 0.8;
+  transition: opacity 0.15s, background 0.15s;
+}
+.nav-btn.cancel.subtle:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.05);
+}
+
+
+/* Primary gradient (old color feel) */
+.gradient-primary {
+  background: linear-gradient(135deg,#6a5cff 0%, #3db3ff 100%);
+  color: #fff;
+  font-weight: 800;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  transition: transform .06s ease, box-shadow .16s ease;
+}
+.gradient-primary:active { transform: translateY(1px); }
+.gradient-primary:disabled { opacity: .6; cursor: not-allowed; }
+
+/* Subtle cancel inline */
+.nav-btn.cancel.subtle {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.28);
+  color: #ff9aa9;                 /* softer warning */
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 600;
+  opacity: .9;
+}
+.nav-btn.cancel.subtle:hover { background: rgba(255,255,255,0.06); }
+
+/* Confirm overlay */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;       /* anchor to bottom */
+  padding-bottom: 110px;       /* lift above bottom bar / nav bar */
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(4px);
+  z-index: 99999;
+}
+
+.confirm-card {
+  width: min(520px, 90vw);
+  background: rgba(15,22,32,0.95);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+}
+.confirm-title {
+  font-weight: 800;
+  margin-bottom: 6px;
+  font-size: 1.05rem;
+}
+.confirm-text {
+  opacity: .9;
+  margin-bottom: 12px;
+  font-size: .95rem;
+}
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.btn-danger {
+  background: linear-gradient(135deg,#ff3db3 0%, #ff5f5f 100%);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 800;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.25);
+  color: #eef4ff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
 </style>
