@@ -32,18 +32,29 @@
 
         <template v-else>
           <!-- Prioritize turn instruction when close (within 300m) -->
-          <template v-if="currentNavInfo && currentNavInfo.nextTurn && !currentNavInfo.isOffRoute && currentNavInfo.nextTurn.distance_m <= 300">
+          <template
+            v-if="currentNavInfo && currentNavInfo.nextTurn && !currentNavInfo.isOffRoute && currentNavInfo.nextTurn.distance_m <= 300"
+          >
             <div class="nav-turn-main">
               <div class="nav-turn-instruction-text">
                 {{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}
-              </div>
-              <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">
-                approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking
+                <span v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time small">
+                  (approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking)
+                </span>
               </div>
             </div>
-            <div class="nav-to-destination">
-              <span class="nav-destination-label">Total distance to {{ currentNavInfo.nextStopName }}:</span>
-              <span class="nav-destination-distance">{{ formatDistance(currentNavInfo.distance_m) }}</span>
+
+            <!-- single-row distance + total time -->
+            <div class="nav-to-destination inline">
+              <span class="nav-destination-label">
+                Total distance to {{ currentNavInfo.nextStopName }}:
+              </span>
+              <span class="nav-destination-distance">
+                {{ formatDistance(currentNavInfo.distance_m) }}
+              </span>
+              <span v-if="currentNavInfo && currentNavInfo.time_s" class="nav-time small">
+                ({{ formatTime(currentNavInfo.time_s) }} walking)
+              </span>
             </div>
           </template>
 
@@ -4658,6 +4669,65 @@ html, body, #app {
   border-radius: 10px;
   padding: 10px 12px;
   font-weight: 700;
+}
+
+.nav-banner .inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.nav-banner .nav-turn-time.small,
+.nav-banner .nav-time.small {
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+.nav-banner .nav-turn-instruction-text {
+  font-weight: 600;
+}
+
+.nav-banner .nav-destination-distance {
+  font-weight: 700;
+}
+
+/* Keep the "Total distance …" row on a single line */
+.nav-banner .nav-to-destination.inline {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;              /* tweak as you like */
+  flex-wrap: nowrap;            /* force single line */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* In case older styles made spans block-level */
+.nav-banner .nav-to-destination.inline > * {
+  display: inline-block !important;
+}
+
+/* Make the long place name truncate nicely, distance/time stay tight */
+.nav-banner .nav-to-destination.inline .nav-destination-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.nav-banner .nav-to-destination.inline .nav-destination-distance,
+.nav-banner .nav-to-destination.inline .nav-time {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* Small parenthesized time */
+.nav-banner .nav-to-destination.inline .nav-time.small {
+  font-size: 0.9em;
+  opacity: 0.85;
+  margin-left: 2px;
 }
 
 </style>
