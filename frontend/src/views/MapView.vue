@@ -330,75 +330,58 @@
 
 
         <!-- ROUTE SELECTION VIEW (after generating routes, before confirmation) -->
-        <div v-else-if="selectedEndStart && isRoutePlanningMode" class="route-selection-view">
-          <h3 class="panel-title">Select Your Route</h3>
-          
-          <!-- Route navigation -->
-          <div class="route-selection">
-            <div class="route-nav">
-              <button class="route-nav-btn" @click="prevRoute" :disabled="currentRouteIndex === 0 || isSwitchingRoute">
-                <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span>
-                <span v-else>⬅️</span>
-              </button>
-              <span class="route-counter">Route {{ currentRouteIndex + 1 }} / {{ generatedRoutes.length }}</span>
-              <button class="route-nav-btn" @click="nextRoute" :disabled="currentRouteIndex === generatedRoutes.length - 1 || isSwitchingRoute">
-                <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span>
-                <span v-else>➡️</span>
-              </button>
-            </div>
-            <button class="confirm-route-btn" @click="confirmRoute">Confirm This Route</button>
-            <button class="generate-new-route-btn" @click="goBackToPlanning">
-              ↻ Generate New Route
-            </button>
-          </div>
+        <!-- ROUTE SELECTION VIEW (compact) -->
+        <div v-else-if="selectedEndStart && isRoutePlanningMode" class="route-selection-view compact">
 
-          <!-- Route information -->
-          <div class="route-info-card">
-            <div class="route-stats-large">
-              <div class="stat-item">
-                <span class="stat-icon">📍</span>
-                <div class="stat-content">
-                  <div class="stat-value">{{ currentRoute.stops.length }} stops</div>
-                  <div class="stat-label">Points of Interest</div>
-                </div>
-              </div>
-              <div class="stat-item">
-                <span class="stat-icon">📏</span>
-                <div class="stat-content">
-                  <div class="stat-value">{{ currentRoute.distance }} km</div>
-                  <div class="stat-label">Total Distance</div>
-                </div>
-              </div>
-              <div class="stat-item">
-                <span class="stat-icon">🕒</span>
-                <div class="stat-content">
-                  <div class="stat-value">{{ currentRoute.time }}</div>
-                  <div class="stat-label">Estimated Time</div>
-                </div>
-              </div>
+          <!-- Header / Route switcher -->
+          <div class="rs-header">
+            <div class="rs-title">Select a route</div>
+            <div class="rs-switcher">
+              <button class="rs-arrow" @click="prevRoute" :disabled="currentRouteIndex === 0 || isSwitchingRoute" aria-label="Previous route">
+                <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span><span v-else>◀</span>
+              </button>
+              <div class="rs-counter">Route {{ currentRouteIndex + 1 }} of {{ generatedRoutes.length }}</div>
+              <button class="rs-arrow" @click="nextRoute" :disabled="currentRouteIndex === generatedRoutes.length - 1 || isSwitchingRoute" aria-label="Next route">
+                <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span><span v-else>▶</span>
+              </button>
             </div>
           </div>
 
-          <!-- POI List -->
-          <div class="poi-list-container">
-            <h4 class="poi-list-title">Points of Interest</h4>
-            <div class="poi-list">
-              <div v-for="(stop, index) in currentRoute.stops" :key="index" 
-                   class="poi-list-item" :class="{ 'current-poi': index === 0 }">
-                <div class="poi-number">{{ index + 1 }}</div>
-                <div class="poi-content">
-                  <div class="poi-name">{{ stop.name || `Stop ${index + 1}` }}</div>
-                  <div class="poi-desc" v-if="stop.description" style="font-size: .85rem; opacity: .9; margin-top: 2px; line-height: 1.25;">
-                    {{ stop.description.length > 180 ? (stop.description.slice(0, 180) + '…') : stop.description }}
-                  </div>
-                  <div class="poi-meta" style="margin-top: 4px; font-size: .75rem; opacity: .85; display: flex; gap: 8px; align-items: center;">
+          <!-- Key stats (chips) -->
+          <div class="rs-chips">
+            <div class="chip">📍 {{ currentRoute?.stops?.length || 0 }} stops</div>
+            <div class="chip">📏 {{ currentRoute?.distance || '—' }} km</div>
+            <div class="chip">🕒 {{ currentRoute?.time || '—' }}</div>
+          </div>
+
+          <!-- Primary actions -->
+          <div class="rs-actions">
+            <button class="btn ghost" @click="goBackToPlanning">Cancel</button>
+            <button class="btn primary" @click="confirmRoute">Confirm route</button>
+          </div>
+
+          <!-- Details (collapsed by default) -->
+          <button class="rs-details-toggle" @click="routeDetailsOpen = !routeDetailsOpen" :aria-expanded="routeDetailsOpen.toString()">
+            <span>Details</span>
+            <span class="count">({{ currentRoute?.stops?.length || 0 }})</span>
+            <span class="caret" :class="{ open: routeDetailsOpen }">▾</span>
+          </button>
+
+          <transition name="fade">
+            <div v-show="routeDetailsOpen" class="rs-details">
+              <div class="poi-row" v-for="(stop, i) in currentRoute.stops" :key="i">
+                <div class="poi-num">{{ i + 1 }}</div>
+                <div class="poi-main">
+                  <div class="poi-name">{{ stop.name || `Stop ${i + 1}` }}</div>
+                  <div class="poi-desc" v-if="stop.description">{{ truncate(stop.description, 160) }}</div>
+                  <div class="poi-meta" v-if="stop.wiki_url || typeof stop.views_365 === 'number'">
                     <span v-if="typeof stop.views_365 === 'number'">📖 {{ stop.views_365.toLocaleString() }}</span>
-                    <a v-if="stop.wiki_url" :href="stop.wiki_url" target="_blank" style="color:#6a5cff; text-decoration: none;">Open article ↗</a>
+                    <a v-if="stop.wiki_url" :href="stop.wiki_url" target="_blank" rel="noopener" class="poi-link">Open article ↗</a>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          </transition>
         </div>
 
         <!-- INITIAL PLANNING VIEW (before generating routes) -->
@@ -518,6 +501,7 @@ const ARRIVAL_DEBOUNCE_S = 1;    // seconds of sustained proximity
 
 
 const arrivalCandidateStartedAt = ref(null);
+const routeDetailsOpen = ref(false);
 const poiIndexChangeReason = ref('auto'); // 'auto' | 'manual'
 
 const autoAdvanceEnabled = ref(true); // toggle if you ever want to disable auto-advance
@@ -551,6 +535,13 @@ function doConfirmCancel() {
 function onSkipStop() {
   toast('⏭️ Skip stop (implementation coming soon)');
 }
+
+// confirm stage bottom things:
+function truncate(text, n = 160) {
+  if (!text) return '';
+  return text.length > n ? text.slice(0, n).trimEnd() + '…' : text;
+}
+
 
 
 // --- New tour state (JS) ---
@@ -2461,6 +2452,11 @@ watch(radius, (v) => {
     circle.setRadius(v);
     loadPois();
   }
+});
+
+//just for bottom sheet when confirming stage
+watch(currentRouteIndex, () => {
+  routeDetailsOpen.value = false;
 });
 
 watch(tripMode, (v) => {
@@ -4729,5 +4725,74 @@ html, body, #app {
   opacity: 0.85;
   margin-left: 2px;
 }
+
+
+.route-selection-view.compact { padding: 12px 14px; display: grid; gap: 10px; }
+
+.rs-header { display: grid; gap: 6px; }
+.rs-title { font-weight: 600; font-size: 1rem; }
+.rs-switcher { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; gap: 6px; }
+.rs-arrow { height: 40px; width: 40px; border-radius: 999px; border: 1px solid rgba(0,0,0,.08); background: rgba(255,255,255,.8); }
+.rs-arrow:disabled { opacity: .5; }
+.rs-counter { text-align: center; font-weight: 600; }
+
+.rs-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { padding: 6px 8px; border-radius: 999px; font-size: .85rem; background: rgba(0,0,0,.05); }
+
+.rs-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn { height: 44px; border-radius: 10px; font-weight: 600; }
+.btn.primary { background: #34d399; color: #0b0b0b; border: none; }
+.btn.ghost { background: transparent; border: 1px solid rgba(0,0,0,.12); }
+
+.rs-details-toggle { 
+  display: flex; align-items: center; gap: 6px; 
+  padding: 8px 10px; border-radius: 10px; 
+  background: rgba(0,0,0,.04); border: 1px solid rgba(0,0,0,.06);
+  font-weight: 600;
+}
+.rs-details-toggle .caret { margin-left: auto; transition: transform .15s ease; }
+.rs-details-toggle .caret.open { transform: rotate(180deg); }
+
+.rs-details { display: grid; gap: 8px; max-height: 45vh; overflow: auto; padding-bottom: 2px; }
+.poi-row { display: grid; grid-template-columns: 28px 1fr; gap: 8px; }
+.poi-num { width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; background: rgba(0,0,0,.08); font-weight: 700; font-size: .85rem; }
+.poi-main { min-width: 0; }
+.poi-name { font-weight: 600; line-height: 1.2; }
+.poi-desc { font-size: .85rem; opacity: .9; margin-top: 2px; line-height: 1.25; }
+.poi-meta { margin-top: 3px; font-size: .75rem; opacity: .85; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.poi-link { color: #6a5cff; text-decoration: none; }
+
+.fade-enter-active, .fade-leave-active { transition: opacity .14s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+
+/* Route selector: make the action buttons match app buttons */
+.rs-actions .btn {
+  border-radius: 12px;     /* same rounded feel as the rest */
+  height: 46px;            /* tiny bump for touch comfort */
+  font-weight: 800;
+}
+
+/* Confirm = same gradient as your primary (“I'm here”) */
+.rs-actions .btn.primary{
+  background: linear-gradient(135deg,#6a5cff 0%, #3db3ff 100%);
+  color:#fff;
+  border:0;
+  box-shadow: 0 6px 18px rgba(58, 104, 255, 0.25);
+  transition: transform .06s ease, filter .16s ease;
+}
+.rs-actions .btn.primary:hover{ filter: brightness(1.05); }
+.rs-actions .btn.primary:active{ transform: translateY(1px); }
+
+/* Cancel = same pink/red gradient you use elsewhere */
+.rs-actions .btn.ghost{
+  background: linear-gradient(135deg,#ff3db3 0%, #ff5f5f 100%);
+  color:#fff;
+  border:0;
+  box-shadow: 0 6px 18px rgba(255, 77, 120, 0.25);
+  transition: transform .06s ease, filter .16s ease;
+}
+.rs-actions .btn.ghost:hover{ filter: brightness(1.05); }
+.rs-actions .btn.ghost:active{ transform: translateY(1px); }
 
 </style>
