@@ -368,7 +368,17 @@
 
           <transition name="fade">
             <div v-show="routeDetailsOpen" class="rs-details">
-              <div class="poi-row" v-for="(stop, i) in currentRoute.stops" :key="i">
+
+              <div
+                class="poi-row clickable"
+                v-for="(stop, i) in currentRoute.stops"
+                :key="i"
+                role="button"
+                tabindex="0"
+                @click="onPoiRowClick(stop)"
+                @keyup.enter.prevent="onPoiRowClick(stop)"
+                @keyup.space.prevent="onPoiRowClick(stop)"
+              >
                 <div class="poi-num">{{ i + 1 }}</div>
                 <div class="poi-main">
                   <div class="poi-name">{{ stop.name || `Stop ${i + 1}` }}</div>
@@ -378,7 +388,9 @@
                     <a v-if="stop.wiki_url" :href="stop.wiki_url" target="_blank" rel="noopener" class="poi-link">Open article ↗</a>
                   </div>
                 </div>
+                <div class="poi-affordance">›</div> <!-- subtle chevron -->
               </div>
+
             </div>
           </transition>
         </div>
@@ -600,6 +612,85 @@ const nextPoiTitle = computed(() => {
 // Prevent teleporting when browsing POIs with the tiny arrows
 const teleportOnManualJump = ref(false);
 
+//Making confirm stage list items clickable:
+function isSamePoi(a, b) {
+  if (!a || !b) return false;
+  // prefer stable IDs
+  if (a.xid && b.xid && a.xid === b.xid) return true;
+  // fallback: close coords OR exact name
+  const aLat = Number(a.lat ?? a.geometry?.coordinates?.[1]);
+  const aLon = Number(a.lon ?? a.geometry?.coordinates?.[0]);
+  const bLat = Number(b.lat ?? b.geometry?.coordinates?.[1]);
+  const bLon = Number(b.lon ?? b.geometry?.coordinates?.[0]);
+  if (Number.isFinite(aLat) && Number.isFinite(aLon) && Number.isFinite(bLat) && Number.isFinite(bLon)) {
+    if (haversineDistance(aLat, aLon, bLat, bLon) <= 40) return true; // OSM tolerances
+  }
+  const an = (a.name || '').trim().toLowerCase();
+  const bn = (b.name || '').trim().toLowerCase();
+  return an && bn && an === bn;
+}
+
+function findMarkerForStop(stop) {
+  let found = null;
+
+  // Check route POI layer first (these are the in-route markers)
+  if (routePoisLayer) {
+    routePoisLayer.eachLayer((m) => {
+      if (found) return;
+      const p = m.options?.props;
+      if (isSamePoi(p, stop)) found = m;
+    });
+  }
+
+  // Fallback: cluster of general POIs (in case a stop wasn’t injected)
+  if (!found && poiCluster) {
+    poiCluster.eachLayer((m) => {
+      if (found) return;
+      const p = m.options?.props;
+      if (isSamePoi(p, stop)) found = m;
+    });
+  }
+
+  return found;
+}
+
+function highlightMarker(marker, props) {
+  // restore previous selected marker
+  if (currentSelectedMarker) {
+    currentSelectedMarker.getElement()?.classList.remove('pulse');
+    const prevProps = currentSelectedMarker.options.props;
+    const prevHasWiki = !!((prevProps?.wv || prevProps?.wiki)?.title);
+    const prevInRoute = isPoiInActiveRoute(prevProps);
+    currentSelectedMarker.setIcon(prevInRoute ? poiInRouteIcon : (prevHasWiki ? poiGreenIcon : poiGrayIcon));
+  }
+  marker.setIcon(poiSelectedIcon);
+  requestAnimationFrame(() => marker.getElement()?.classList.add('pulse'));
+  currentSelectedMarker = marker;
+}
+
+function onPoiRowClick(stop) {
+  // Build a props shape that openPoiInSheet understands
+  const props = {
+    ...stop,
+    lat: stop.lat,
+    lon: stop.lon,
+    kinds: stop.categories || stop.kinds || [],
+    det: stop.det,
+    wv: stop.wv,
+    wiki: stop.wiki,
+    xid: stop.xid,
+    name: stop.name
+  };
+
+  openPoiInSheet(props); // opens the sheet and pans/zooms
+
+  // Try to visually select the corresponding marker as if map click happened
+  const m = findMarkerForStop(stop);
+  if (m) {
+    highlightMarker(m, props);
+    // keep the sheet mid; user can expand if they want
+  }
+}
 
 function distToNextStopWalking_m() {
   const iNext = nextPoiIndex.value;
@@ -4915,4 +5006,9 @@ html, body, #app {
   font-weight: 600;
   color: #cfd9ff;
 }
+
+.poi-row.clickable { cursor: pointer; align-items: center; }
+.poi-row.clickable:active { transform: translateY(1px); }
+.poi-affordance { margin-left: 8px; opacity: .7; font-weight: 800; }
+.poi-row:hover .poi-affordance { opacity: .95; }
 </style>
