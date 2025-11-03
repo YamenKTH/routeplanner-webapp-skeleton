@@ -335,12 +335,11 @@
 
           <!-- Header / Route switcher -->
           <div class="rs-header">
-            <div class="rs-title">Select a route</div>
             <div class="rs-switcher">
               <button class="rs-arrow" @click="prevRoute" :disabled="currentRouteIndex === 0 || isSwitchingRoute" aria-label="Previous route">
                 <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span><span v-else>◀</span>
               </button>
-              <div class="rs-counter">Route {{ currentRouteIndex + 1 }} of {{ generatedRoutes.length }}</div>
+              <div class="rs-counter">Swap Route ({{ currentRouteIndex + 1 }} of {{ generatedRoutes.length }} )</div>
               <button class="rs-arrow" @click="nextRoute" :disabled="currentRouteIndex === generatedRoutes.length - 1 || isSwitchingRoute" aria-label="Next route">
                 <span v-if="isSwitchingRoute" class="btn-icon spinning">🔄</span><span v-else>▶</span>
               </button>
@@ -2005,6 +2004,7 @@ async function loadPois() {
 
 /* ---------------- Route Management ---------------- */
 async function prevRoute() {
+  toast('Implementation coming soon. Now: Same route');
   if (currentRouteIndex.value > 0 && !isSwitchingRoute.value) {
     isSwitchingRoute.value = true;
     
@@ -2020,6 +2020,7 @@ async function prevRoute() {
 }
 
 async function nextRoute() {
+  toast('Implementation coming soon. Now: Same route');
   if (currentRouteIndex.value < generatedRoutes.value.length - 1 && !isSwitchingRoute.value) {
     isSwitchingRoute.value = true;
     
@@ -4795,4 +4796,123 @@ html, body, #app {
 .rs-actions .btn.ghost:hover{ filter: brightness(1.05); }
 .rs-actions .btn.ghost:active{ transform: translateY(1px); }
 
+
+/* --- Route details: match arrival card readability --- */
+.rs-details {
+  background: rgba(15, 22, 32, 0.55);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 12px;
+  padding: 10px 12px;
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+  color: #eef4ff;
+}
+
+/* Each POI row styled like a mini “arrival” card */
+.poi-row {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  transition: background 0.15s ease;
+}
+
+.poi-row:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+.poi-num {
+  background: rgba(106, 92, 255, 0.8);
+  color: #fff;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.poi-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.poi-name {
+  font-weight: 800;
+  font-size: 0.95rem;
+  margin-bottom: 3px;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+
+.poi-desc {
+  font-size: 0.9rem;
+  line-height: 1.35;
+  opacity: 0.95;
+  color: #f3f6ff;
+}
+
+.poi-meta {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  opacity: 0.85;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #cfd9ff;
+}
+
+.poi-link {
+  color: #9eb4ff;
+  text-decoration: none;
+  font-weight: 600;
+}
+.poi-link:hover {
+  text-decoration: underline;
+}
+
+
+/* --- Details toggle: match arrival/POI dark glass card style --- */
+.rs-details-toggle {
+  background: rgba(15, 22, 32, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  color: #eef4ff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.rs-details-toggle:hover {
+  background: rgba(15, 22, 32, 0.65);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.rs-details-toggle .caret {
+  margin-left: auto;
+  transition: transform 0.15s ease;
+  opacity: 0.9;
+}
+
+.rs-details-toggle .caret.open {
+  transform: rotate(180deg);
+}
+
+.rs-details-toggle .count {
+  opacity: 0.9;
+  font-weight: 600;
+  color: #cfd9ff;
+}
 </style>
