@@ -111,7 +111,7 @@
 
       <div class="sheet-content">
         <!-- ROUTE NAVIGATION VIEW (when route is confirmed) -->
-        <div v-if="confirmedRoute && !isRoutePlanningMode" class="route-navigation-view">
+        <div v-if="confirmedRoute && !isRoutePlanningMode && !selectedPoi" class="route-navigation-view">
 
           <!-- Top bar: stats + tiny browse arrows (top-right) -->
           <div class="route-summary">
@@ -449,6 +449,8 @@
 </template>
 
 <script setup>
+//NOW IT WORKSS!!!!!!!!!!!!!!!!!
+//GO BACK TO THIS IF FAILS LATER!
 import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
 import axios from "axios";
 import L from "leaflet";
@@ -477,6 +479,8 @@ const arrivalCandidateStartedAt = ref(null);
 const poiIndexChangeReason = ref('auto'); // 'auto' | 'manual'
 
 const autoAdvanceEnabled = ref(true); // toggle if you ever want to disable auto-advance
+
+
 const _walkProbe = ref({
   active: false,
   prevDist: null,
@@ -741,6 +745,12 @@ const endLat = ref(null);
 const endLon = ref(null);
 
 let map, origin, circle, poiCluster, tourLayer;
+
+let routePoisLayer = null;
+let planningStopsLayer = null;
+
+
+
 let currentLegLayer = null; // Highlighted layer for current leg to next POI
 let deviationLineLayer = null; // Line from user position to nearest route point when off-route
 let endMarker = null;
@@ -796,10 +806,16 @@ const showStartEnd = computed(() => {
 
 // --- after other refs/computeds ---
 const activeRoute = computed(() => {
-  // During route-selection, use the currently browsed candidate
-  if (isRoutePlanningMode.value && selectedEndStart.value) return currentRoute.value;
-  // Otherwise, if we have a confirmed route (navigation/planning), use it
+  // strongest signal first
   if (confirmedRoute.value) return confirmedRoute.value;
+
+  // planning fallback: current candidate if any
+  if (isRoutePlanningMode.value) {
+    return currentRoute.value
+        ?? generatedRoutes.value?.[currentRouteIndex.value]
+        ?? null;
+  }
+
   return null;
 });
 
@@ -812,12 +828,7 @@ function poiKey(p) {
   return `name:${(p?.name || '').toLowerCase()}`;
 }
 
-/**function isPoiInActiveRoute(poi) {
-  const r = activeRoute.value;
-  if (!r?.stops?.length) return false;
-  const k = poiKey(poi);
-  return r.stops.some(s => poiKey(s) === k);
-}**/
+
 
 
 // ----- Geometry helpers for accurate path snapping -----
@@ -1794,31 +1805,26 @@ async function loadPois() {
   };
 
   const { data } = await api.post("/api/pois", payload);
-  //const { data } = await api.post("/pois", payload);
 
+  // Recreate/clear layers
   if (poiCluster) poiCluster.remove();
   poiCluster = L.markerClusterGroup({
     spiderfyOnMaxZoom: true,
     showCoverageOnHover: false,
-  });
+  }).addTo(map);
 
-  (data.features || []).forEach((f) => {
-    const [gLon, gLat] = f.geometry.coordinates;
-    const rawProps = f.properties || {};
+  if (!routePoisLayer) {
+    routePoisLayer = L.layerGroup([], { pane: 'onroute' }).addTo(map);
+  } else {
+    routePoisLayer.clearLayers();
+  }
 
-    // Ensure the props we keep on the marker include lat/lon/geometry for matching
-    const baseProps = { ...rawProps, lat: gLat, lon: gLon, geometry: f.geometry };
+  // Build stop index & book-keeping of which stops we’ve seen from the API
+  const routeIdx = buildActiveRouteIndex();
+  const seenStopKeys = new Set();
 
-    // Pick icon based on route membership first, then wiki/gray
-    const hasWiki  = !!((baseProps.wv || baseProps.wiki)?.title);
-    const inRoute  = isPoiInActiveRoute(baseProps);
-    const icon     = inRoute ? poiInRouteIcon : (hasWiki ? poiGreenIcon : poiGrayIcon);
-
-    const marker = L.marker([gLat, gLon], { icon });
-    marker.options.props = baseProps; // keep for later comparisons
-
+  const addClickHandler = (marker, baseProps) => {
     marker.on('click', () => {
-      // unhighlight previous
       if (currentSelectedMarker) {
         currentSelectedMarker.getElement()?.classList.remove('pulse');
         const prevProps   = currentSelectedMarker.options.props;
@@ -1826,21 +1832,93 @@ async function loadPois() {
         const prevInRoute = isPoiInActiveRoute(prevProps);
         currentSelectedMarker.setIcon(prevInRoute ? poiInRouteIcon : (prevHasWiki ? poiGreenIcon : poiGrayIcon));
       }
-
-      // highlight this one
       marker.setIcon(poiSelectedIcon);
-      // ensure the DOM element exists before adding the class
       requestAnimationFrame(() => marker.getElement()?.classList.add('pulse'));
-
       currentSelectedMarker = marker;
-
       openPoiInSheet(baseProps);
     });
+  };
 
-    poiCluster.addLayer(marker);
-  });
+  const chooseIconForStopIndex = (idx, lastIdx) => {
+    if (idx === 0) return isRoutePlanningMode.value ? startIcon : null; // hide start in nav mode
+    if (idx === currentPoiIndex.value) return currentPoiIcon;
+    if (tripMode.value === "end" && idx === lastIdx) return endIcon;
+    return routePoiIcon;
+  };
 
-  map.addLayer(poiCluster);
+  // 1) Render all API POIs
+  for (const f of (data.features || [])) {
+    const [gLon, gLat] = f.geometry.coordinates;
+    const rawProps = f.properties || {};
+    const baseProps = { ...rawProps, lat: gLat, lon: gLon, geometry: f.geometry };
+
+    const k = keyForPOI(baseProps);
+    const hasWiki = !!((baseProps.wv || baseProps.wiki)?.title);
+    const inRoute = isPoiInActiveRoute(baseProps);
+
+    if (inRoute && routeIdx.has(k)) {
+      seenStopKeys.add(k);
+    }
+
+    // If this matches a specific stop index, choose its special icon; else generic in-route icon
+    let icon;
+    if (inRoute && routeIdx.has(k)) {
+      const { index } = routeIdx.get(k);
+      const lastIdx = (activeRoute.value?.stops?.length || 1) - 1;
+      icon = chooseIconForStopIndex(index, lastIdx) || poiInRouteIcon; // null hides start in nav
+    } else {
+      icon = hasWiki ? poiGreenIcon : poiGrayIcon;
+    }
+
+    // If we decided to hide (start in nav mode), skip adding a marker
+    if (!icon) continue;
+
+    const opts = { icon };
+    if (inRoute) opts.pane = 'onroute';
+
+    const marker = L.marker([gLat, gLon], opts);
+    marker.options.props = baseProps;
+    addClickHandler(marker, baseProps);
+
+    if (inRoute) routePoisLayer.addLayer(marker);
+    else poiCluster.addLayer(marker);
+  }
+
+  // 2) Inject any route stops that the API didn’t return (so user still sees/can click them)
+  const r = activeRoute.value;
+  const stops = r?.stops || [];
+  const lastIdx = stops.length - 1;
+
+  for (let i = 0; i < stops.length; i++) {
+    const s = stops[i];
+    const syntheticKey =
+      (s?.xid && `xid:${s.xid}`) ||
+      (Number.isFinite(s?.lat) && Number.isFinite(s?.lon) && `ll:${Number(s.lat).toFixed(6)},${Number(s.lon).toFixed(6)}`) ||
+      (s?.name && `name:${s.name.trim().toLowerCase()}`) ||
+      null;
+
+    if (syntheticKey && seenStopKeys.has(syntheticKey)) continue; // already rendered via API
+
+    // Decide icon (and hide start in nav mode)
+    const icon = chooseIconForStopIndex(i, lastIdx);
+    if (!icon) continue;
+
+    const baseProps = {
+      ...s,
+      lat: s.lat,
+      lon: s.lon,
+      name: s.name || `Stop ${i + 1}`,
+      kinds: Array.isArray(s.categories) ? s.categories : (s.kinds || []),
+      det: s.det,
+      wv: s.wv,
+      xid: s.xid,
+    };
+
+    const m = L.marker([s.lat, s.lon], { icon, pane: 'onroute' });
+    m.options.props = baseProps;
+    addClickHandler(m, baseProps);
+    routePoisLayer.addLayer(m);
+  }
 }
 
 /* ---------------- Route Management ---------------- */
@@ -1873,43 +1951,37 @@ async function nextRoute() {
     }, 800);
   }
 }
-
+//works quite well 
 function confirmRoute() {
   navMode.value = 'navigating';
   visitedIdx.value = new Set();
-  currentPoiIndex.value = Math.min(1, (confirmedRoute.value?.stops?.length || 1) - 1);
-  currentNavLegIndex.value = 0; // leg 0 = start -> stop 1
+  selectedPoi.value = null;
 
-  selectedPoi.value = null; 
   confirmedRoute.value = generatedRoutes.value[currentRouteIndex.value];
   currentPoiIndex.value = Math.min(1, (confirmedRoute.value?.stops?.length || 1) - 1);
-  currentNavLegIndex.value = 0; // Reset navigation leg index to start with first leg
+  currentNavLegIndex.value = 0;
   isRoutePlanningMode.value = false;
-  selectedEndStart.value = false; // THIS ONE, OLIVER WANTED TO REMOVE, NOT SURE WHY
-  updateRoutePoiMarkers();
+  selectedEndStart.value = false;
+
+  // Clean up ANY planning-time markers that might still be on the map
+  try { planningStopsLayer?.clearLayers(); } catch {}
+  try { window._stopMarkers?.forEach(m => m.remove()); window._stopMarkers = []; } catch {}
+  // Hide the draggable start pin in nav
+  if (origin) { origin.setOpacity(0); origin.dragging?.disable(); }
   sheetState.value = "mid";
-  
-  // Start navigation from the route's start position (which may be manually selected)
-  // This respects the user's manually selected start position instead of always using GPS
+
   const firstStop = confirmedRoute.value?.stops?.[0];
   if (firstStop) {
-    // Use the route's start position (matches lat.value and lon.value used to generate route)
     const startPos = [firstStop.lat, firstStop.lon];
     currentGPSPosition.value = startPos;
-    
-    // Create the current location marker at the start position
     if (!currentLocationMarker) {
-      currentLocationMarker = L.marker(startPos, { 
-        icon: currentLocationIcon, 
+      currentLocationMarker = L.marker(startPos, {
+        icon: currentLocationIcon,
         zIndexOffset: 1000,
         draggable: true
       }).addTo(map);
-      
-      // Set up drag handlers
-      currentLocationMarker.on('dragstart', () => {
-        isManualMode.value = true;
-      });
-      
+
+      currentLocationMarker.on('dragstart', () => { isManualMode.value = true; });
       currentLocationMarker.on('drag', (e) => {
         const pos = e.target.getLatLng();
         currentGPSPosition.value = [pos.lat, pos.lng];
@@ -1918,34 +1990,24 @@ function confirmRoute() {
           if (z < 17) map.setView(pos, 17); else map.panTo(pos);
         }
       });
-      
       currentLocationMarker.on('dragend', (e) => {
         const pos = e.target.getLatLng();
         currentGPSPosition.value = [pos.lat, pos.lng];
-        if (!isRoutePlanningMode.value && map) {
-          map.panTo(pos);
-        }
+        if (!isRoutePlanningMode.value && map) map.panTo(pos);
         evaluateArrival();
       });
     } else {
       currentLocationMarker.setLatLng(startPos);
     }
-    
-    // Center map on the start position
     if (map) map.setView(startPos, 17);
-    
-    // Start in manual mode to preserve the manually set start position
-    // GPS tracking will start but won't override until user clicks "Reset to GPS"
     isManualMode.value = true;
   }
-  
-  // Start GPS tracking (but it won't update position while in manual mode)
-  // User must click "Reset to GPS" to enable GPS tracking
+
   startNavigationTracking();
 
-  updateRoutePoiMarkers();
-  sheetState.value = "mid";
-  loadPois();
+  // Call ONCE here, after confirmedRoute is set,
+  // so isPoiInActiveRoute() can classify correctly
+  //loadPois();
 }
 
 function prevPoi() {
@@ -1981,45 +2043,44 @@ function zoomToCurrentPoi() {
   }
 }
 
-function updateRoutePoiMarkers() {
-  // Clear existing route POI markers
-  routePoiMarkers.forEach(marker => marker.remove());
-  routePoiMarkers = [];
+// Build a quick index for stops in the active route (by xid/coords/name)
+function buildActiveRouteIndex() {
+  const r = activeRoute.value;
+  const map = new Map();
+  if (!r?.stops?.length) return map;
 
-  if (!confirmedRoute.value || !confirmedRoute.value.stops) return;
-
-  // Hide origin marker when in navigation mode
-  if (origin) {
-    if (!isRoutePlanningMode.value) {
-      origin.setOpacity(0);
-      origin.dragging?.disable();
-    } else {
-      origin.setOpacity(1);
-      origin.dragging?.enable();
+  r.stops.forEach((s, i) => {
+    // Prefer xid
+    if (s?.xid) map.set(`xid:${s.xid}`, { index: i, stop: s });
+    // Fallback: lat/lon
+    if (Number.isFinite(s?.lat) && Number.isFinite(s?.lon)) {
+      map.set(`ll:${Number(s.lat).toFixed(6)},${Number(s.lon).toFixed(6)}`, { index: i, stop: s });
     }
-  }
-
-  // Add route POIs with special styling
-  confirmedRoute.value.stops.forEach((stop, index) => {
-    let icon;
-    if (index === 0) {
-      // Skip start marker if in navigation mode (GPS marker replaces it)
-      if (!isRoutePlanningMode.value) return;
-      icon = startIcon; // Start marker
-    } else if (index === confirmedRoute.value.stops.length - 1 && tripMode.value === "end") {
-      icon = endIcon; // End marker
-    } else if (index === currentPoiIndex.value) {
-      icon = currentPoiIcon; // Current POI - larger and highlighted
-    } else {
-      icon = routePoiIcon; // Other route POIs - blue color to distinguish from regular POIs
-    }
-
-    const marker = L.marker([stop.lat, stop.lon], { icon })
-      .bindPopup(`<b>${stop.name || `Stop ${index + 1}`}</b><br/>Route point`);
-    
-    marker.addTo(map);
-    routePoiMarkers.push(marker);
+    // Fallback: name
+    if (s?.name) map.set(`name:${s.name.trim().toLowerCase()}`, { index: i, stop: s });
   });
+  return map;
+}
+
+// Reuse your existing key generator
+function keyForPOI(p) {
+  if (p?.xid) return `xid:${p.xid}`;
+  const lat = Number(p?.lat ?? p?.geometry?.coordinates?.[1]);
+  const lon = Number(p?.lon ?? p?.geometry?.coordinates?.[0]);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) return `ll:${lat.toFixed(6)},${lon.toFixed(6)}`;
+  return `name:${(p?.name || '').trim().toLowerCase()}`;
+}
+
+function updateRoutePoiMarkers() {
+  // Only toggle the origin’s visibility/dragging per mode.
+  if (!origin) return;
+  if (!isRoutePlanningMode.value) {
+    origin.setOpacity(0);
+    origin.dragging?.disable();
+  } else {
+    origin.setOpacity(1);
+    origin.dragging?.enable();
+  }
 }
 
 function isPoiInActiveRoute(poi) {
@@ -2241,6 +2302,16 @@ onMounted(() => {
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
   }).addTo(map);
+    // Create a pane that sits above markercluster's default markers
+  if (!map.getPane('onroute')) {
+    map.createPane('onroute');
+    map.getPane('onroute').style.zIndex = 650; // markercluster is ~600
+  }
+
+  // Non-clustered layer just for POIs that belong to the active route
+  routePoisLayer = L.layerGroup([], { pane: 'onroute' }).addTo(map);
+
+  planningStopsLayer = L.layerGroup().addTo(map);
 
   origin = L.marker([lat.value, lon.value], {
     draggable: true,
@@ -2420,6 +2491,10 @@ watch(currentPoiIndex, (newIndex, oldIndex) => {
 }, { immediate: false });
 
 
+function getActiveRoute() {
+  // Prefer the confirmed route when navigating; else show the currently displayed candidate
+  return confirmedRoute.value || generatedRoutes.value?.[currentRouteIndex.value] || null;
+}
 
 function evaluateArrival() {
   if (!confirmedRoute.value || isRoutePlanningMode.value) return;
