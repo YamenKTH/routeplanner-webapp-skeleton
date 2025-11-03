@@ -3,45 +3,76 @@
     <div id="map"></div>
 
     <!-- Navigation Banner (Google Maps style) -->
-    <div v-if="confirmedRoute && !isRoutePlanningMode && currentNavInfo && currentNavInfo" class="nav-banner">
+    <div
+      v-if="confirmedRoute && !isRoutePlanningMode && (isArrived || currentNavInfo)"
+      class="nav-banner"
+    >
       <!-- Show deviation warning if off-route -->
-      <div v-if="currentNavInfo.isOffRoute" class="nav-deviation-warning">
+      <div v-if="!isArrived && currentNavInfo && currentNavInfo.isOffRoute" class="nav-deviation-warning">
         <div class="nav-deviation-icon">⚠️</div>
         <div class="nav-deviation-text">
           <div class="nav-deviation-title">Off Route</div>
-          <div class="nav-deviation-distance">{{ formatDistance(currentNavInfo.deviationFromRoute) }} from route</div>
+          <div class="nav-deviation-distance">
+            {{ currentNavInfo ? formatDistance(currentNavInfo.deviationFromRoute) : '' }} from route
+          </div>
         </div>
       </div>
       
       <div class="nav-banner-content">
-        <!-- Prioritize turn instruction when close (within 300m) -->
-        <template v-if="currentNavInfo.nextTurn && !currentNavInfo.isOffRoute && currentNavInfo.nextTurn.distance_m <= 300">
-          <div class="nav-turn-main">
-            <div class="nav-turn-instruction-text">
-              {{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}
-            </div>
-            <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking</div>
-          </div>
-          <div class="nav-to-destination">
-            <span class="nav-destination-label">Total distance to {{ currentNavInfo.nextStopName }}:</span>
-            <span class="nav-destination-distance">{{ formatDistance(currentNavInfo.distance_m) }}</span>
-          </div>
-        </template>
-        
-        <!-- Otherwise show distance to POI as primary -->
-        <template v-else>
+        <!-- ARRIVED -->
+        <template v-if="isArrived">
           <div class="nav-distance-main">
-            <div class="nav-distance" :class="{ 'off-route-distance': currentNavInfo.isOffRoute }">{{ formatDistance(currentNavInfo.distance_m) }}</div>
-            <div class="nav-destination">{{ currentNavInfo.nextStopName }}</div>
-            <div v-if="currentNavInfo.time_s" class="nav-time">{{ formatTime(currentNavInfo.time_s) }} walking</div>
-          </div>
-          <!-- Show upcoming turn as secondary info if available -->
-          <div v-if="currentNavInfo.nextTurn && !currentNavInfo.isOffRoute" class="nav-turn-upcoming">
-            <div class="nav-turn-instruction-text">{{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}</div>
-            <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking</div>
+            <div class="nav-destination">You've arrived at {{ currentPoiName }}</div>
           </div>
         </template>
-        
+
+        <template v-else>
+          <!-- Prioritize turn instruction when close (within 300m) -->
+          <template v-if="currentNavInfo && currentNavInfo.nextTurn && !currentNavInfo.isOffRoute && currentNavInfo.nextTurn.distance_m <= 300">
+            <div class="nav-turn-main">
+              <div class="nav-turn-instruction-text">
+                {{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}
+              </div>
+              <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">
+                approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking
+              </div>
+            </div>
+            <div class="nav-to-destination">
+              <span class="nav-destination-label">Total distance to {{ currentNavInfo.nextStopName }}:</span>
+              <span class="nav-destination-distance">{{ formatDistance(currentNavInfo.distance_m) }}</span>
+            </div>
+          </template>
+
+          <!-- Otherwise show distance to POI as primary -->
+          <template v-else>
+            <div class="nav-distance-main">
+              <div
+                class="nav-distance"
+                :class="{ 'off-route-distance': currentNavInfo && currentNavInfo.isOffRoute }"
+              >
+                {{ currentNavInfo ? formatDistance(currentNavInfo.distance_m) : '' }}
+              </div>
+              <div class="nav-destination">{{ currentNavInfo ? currentNavInfo.nextStopName : '' }}</div>
+              <div v-if="currentNavInfo && currentNavInfo.time_s" class="nav-time">
+                {{ formatTime(currentNavInfo.time_s) }} walking
+              </div>
+            </div>
+
+            <!-- Show upcoming turn as secondary info if available -->
+            <div
+              v-if="currentNavInfo && currentNavInfo.nextTurn && !currentNavInfo.isOffRoute"
+              class="nav-turn-upcoming"
+            >
+              <div class="nav-turn-instruction-text">
+                {{ currentNavInfo.nextTurn.direction }} in {{ formatDistance(currentNavInfo.nextTurn.distance_m) }}
+              </div>
+              <div v-if="currentNavInfo.nextTurn.time_s" class="nav-turn-time">
+                approx {{ formatTime(currentNavInfo.nextTurn.time_s) }} walking
+              </div>
+            </div>
+          </template>
+        </template>
+
         <!-- Manual Mode Indicator -->
         <div v-if="isManualMode" class="nav-manual-mode-indicator">
           <span class="manual-mode-icon">✋</span>
@@ -81,30 +112,92 @@
       <div class="sheet-content">
         <!-- ROUTE NAVIGATION VIEW (when route is confirmed) -->
         <div v-if="confirmedRoute && !isRoutePlanningMode" class="route-navigation-view">
+
+          <!-- Top bar: stats + tiny browse arrows (top-right) -->
           <div class="route-summary">
             <div class="route-stats">
               <span class="stat">📍 {{ confirmedRoute.stops.length }} stops</span>
               <span class="stat">📏 {{ confirmedRoute.distance }} km</span>
               <span class="stat">🕒 {{ confirmedRoute.time }}</span>
             </div>
+
+            <!-- Tiny arrows in top-right -->
+            <div class="poi-browse-controls">
+              <button class="browse-btn" @click="prevPoi" :disabled="currentPoiIndex === 0">◀</button>
+              <button class="browse-btn" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">▶</button>
+            </div>
           </div>
-          
-          <div class="current-poi-card">
-            <h4>{{ currentPoiName }}</h4>
-            <div class="poi-details">
-              <div class="poi-info" v-if="currentPoiDetails">
-                <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
-                <div class="poi-description">{{ currentPoiDetails.description }}</div>
+
+          <!-- NAVIGATING: sneak peek of NEXT stop + "I'm here" -->
+          <div v-if="!isArrived" class="nav-mode navigating">
+
+            <!-- A) Current destination: LIMITED -->
+            <template v-if="currentPoiIndex === destIndex">
+              <div class="next-peek">
+                <div class="peek-label">Current destination</div>
+                <div class="peek-title"
+                    :style="{ opacity: visitedIdx.has(currentPoiIndex) ? 0.45 : 1 }">
+                  {{ currentPoiName }}
+                </div>
+              </div>
+              <div class="poi-quick-actions">
+                <button class="action primary" @click="onImHereClick">✅ I’m here</button>
+              </div>
+            </template>
+
+            <!-- B) Old (visited) stop: FULL TEXT -->
+            <template v-else-if="visitedIdx.has(currentPoiIndex)">
+              <div class="current-poi-card">
+                <h4 :style="{ opacity: 0.6 }">{{ currentPoiName }}</h4>
+                <div class="poi-details">
+                  <div class="poi-info" v-if="currentPoiDetails">
+                    <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
+                    <div class="poi-description">{{ currentPoiDetails.description }}</div>
+                  </div>
+                </div>
+                <!-- no Next button here (still in navigating mode) -->
+              </div>
+            </template>
+
+            <!-- C) Future stop (after destination): FULL TEXT -->
+            <template v-else>
+              <div class="current-poi-card">
+                <h4>{{ currentPoiName }}</h4>
+                <div class="poi-details">
+                  <div class="poi-info" v-if="currentPoiDetails">
+                    <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
+                    <div class="poi-description">{{ currentPoiDetails.description }}</div>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+          </div>
+
+          <!-- ARRIVED: full current POI + "Next stop →" -->
+          <div v-else class="nav-mode arrived">
+            <div class="current-poi-card">
+              <h4 :style="{ opacity: 1 }">
+                {{ currentPoiName }}
+              </h4>
+              <div class="poi-details">
+                <div class="poi-info" v-if="currentPoiDetails">
+                  <div class="poi-categories">{{ currentPoiDetails.categories }}</div>
+                  <div class="poi-description">{{ currentPoiDetails.description }}</div>
+                </div>
+              </div>
+              <div class="poi-navigation-footer">
+                <button
+                  class="nav-btn next"
+                  @click="onArrivedPrimaryAction"
+                  :disabled="currentPoiIndex !== furthestVisitedIndex">
+                  {{ currentPoiIndex === confirmedRoute.stops.length - 1 ? 'End tour' : 'Next stop →' }}
+                </button>
               </div>
             </div>
-            <div class="poi-navigation">
-              <button class="nav-btn" @click="prevPoi" :disabled="currentPoiIndex === 0">⬅️ Previous</button>
-              <span class="poi-counter">{{ currentPoiIndex + 1 }} / {{ confirmedRoute.stops.length }}</span>
-              <button class="nav-btn" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">Next ➡️</button>
-            </div>
           </div>
-          
-          <!-- Cancel Navigation Button -->
+
+          <!-- Keep: Cancel Navigation -->
           <button class="cancel-nav-btn" @click="cancelNavigation">
             Cancel Navigation
           </button>
@@ -379,6 +472,241 @@ const ARRIVAL_DEBOUNCE_S = 1;    // seconds of sustained proximity
 const arrivalCandidateStartedAt = ref(null);
 const poiIndexChangeReason = ref('auto'); // 'auto' | 'manual'
 
+const autoAdvanceEnabled = ref(true); // toggle if you ever want to disable auto-advance
+const _walkProbe = ref({
+  active: false,
+  prevDist: null,
+  improvingTicks: 0,
+  basePos: null,
+  baseDist: null,
+});
+
+
+// --- New tour state (JS) ---
+const navMode = ref('navigating');      // 'navigating' or 'arrived'
+const visitedIdx = ref(new Set());      // Set of visited stop indexes
+
+const isArrived = computed(() => navMode.value === 'arrived');
+
+//auto advance:
+const _departProbe = ref({
+  active: false,
+  base_m: null,     // distance to next stop at the moment we arrived
+  last_m: null,
+  consecTicks: 0,
+});
+
+const DEPART_TOTAL_DELTA = 15;   // meters closer overall to trigger
+//const MIN_STEP_GAIN      = 2.5;  // must improve at least this much per tick
+const MIN_CONSEC_TICKS   = 2;    // ...for this many consecutive ticks
+const JITTER_TOL             = 1.5;
+
+// The stop we’re currently walking to = destination of the active leg
+const destIndex = computed(() => {
+  const n = confirmedRoute.value?.stops?.length || 0;
+  if (!n) return null;
+  return Math.min((currentNavLegIndex.value || 0) + 1, n - 1);
+});
+
+const furthestVisitedIndex = computed(() => {
+  if (!visitedIdx.value || visitedIdx.value.size === 0) return -1;
+  let max = -1;
+  for (const i of visitedIdx.value) if (i > max) max = i;
+  return max;
+});
+
+const nextPoiIndex = computed(() => {
+  if (!confirmedRoute.value || !confirmedRoute.value.stops?.length) return null;
+  const i = Math.min(currentPoiIndex.value + 1, confirmedRoute.value.stops.length - 1);
+  return i === currentPoiIndex.value ? null : i;
+});
+
+// Show the next POI title in the sneak peek
+const nextPoiTitle = computed(() => {
+  const i = nextPoiIndex.value;
+  if (i == null) return null;
+  const stop = confirmedRoute.value?.stops?.[i];
+  return stop?.name || `Stop ${i + 1}`;
+});
+
+// Prevent teleporting when browsing POIs with the tiny arrows
+const teleportOnManualJump = ref(false);
+
+
+function distToNextStopWalking_m() {
+  const iNext = nextPoiIndex.value;
+  if (iNext == null || !currentGPSPosition.value) return Infinity;
+
+  const [clat, clon] = currentGPSPosition.value;
+  const nextStop = confirmedRoute.value?.stops?.[iNext];
+  if (!nextStop) return Infinity;
+
+  // Prefer along the NEXT leg if we’re near it
+  const leg = confirmedRoute.value?.navigation_legs?.[iNext - 1];
+  const legLen = Number(leg?.distance_m) || 0;
+
+  if (leg && Array.isArray(leg.coords_latlon) && leg.coords_latlon.length > 1) {
+    if (!leg._cum || !leg._segLen) {
+      const { cum, segLen } = buildCumMeasures(leg.coords_latlon);
+      leg._cum = cum; leg._segLen = segLen;
+    }
+    const snap = projectToPolyline([clat, clon], leg.coords_latlon, leg._cum, leg._segLen);
+    // if you’re within 30 m of the next leg, use along-route; else fallback to straight-line
+    if (snap && snap.distanceToPath_m <= 30 && Number.isFinite(snap.measure_m)) {
+      return Math.max(0, legLen - snap.measure_m);
+    }
+  }
+
+  // fallback: straight-line distance
+  return haversineDistance(clat, clon, nextStop.lat, nextStop.lon);
+}
+
+function remainingToNextStopMeters() {
+  const iNext = nextPoiIndex.value;
+  if (iNext == null) return Infinity;
+  if (!currentGPSPosition.value) return Infinity;
+
+  const [clat, clon] = currentGPSPosition.value;
+  const nextStop = confirmedRoute.value?.stops?.[iNext];
+  if (!nextStop) return Infinity;
+
+  // Prefer along-route distance on the NEXT leg (iNext - 1)
+  const leg = confirmedRoute.value?.navigation_legs?.[iNext - 1];
+  const legLen = Number(leg?.distance_m) || 0;
+
+  if (leg && Array.isArray(leg.coords_latlon) && leg.coords_latlon.length > 1) {
+    // ensure cum/segLen
+    if (!leg._cum || !leg._segLen) {
+      const { cum, segLen } = buildCumMeasures(leg.coords_latlon);
+      leg._cum = cum; leg._segLen = segLen;
+    }
+    const snap = projectToPolyline([clat, clon], leg.coords_latlon, leg._cum, leg._segLen);
+    // if we’re reasonably near the next leg, use along-route remaining; else fall back to straight-line
+    const NEAR_NEXT_LEG_TOL = 40; // meters
+    if (snap && Number.isFinite(snap.measure_m) && snap.distanceToPath_m <= NEAR_NEXT_LEG_TOL) {
+      return Math.max(0, legLen - snap.measure_m);
+    }
+  }
+
+  // Fallback: straight-line to next POI
+  console.log("FELL BACK ON HAVERSINE -- BAD")
+  return haversineDistance(clat, clon, nextStop.lat, nextStop.lon);
+}
+
+
+function onArrivedPrimaryAction() {
+  // Only act at the latest arrived stop (prevents skipping when browsing back)
+  if (currentPoiIndex.value !== furthestVisitedIndex.value) {
+    toast("⏪ You’re viewing an earlier stop");
+    return;
+  }
+
+  const last = (confirmedRoute.value?.stops?.length || 1) - 1;
+  if (currentPoiIndex.value === last) {
+    // Final stop: end as you do today
+    cancelNavigation();
+    toast("🏁 Tour finished");
+  } else {
+    // Otherwise: continue exactly as before
+    goToNextStop();
+  }
+}
+
+function maybeAutoDepartFromArrived() {
+  if (navMode.value !== 'arrived') return;
+  if (!_departProbe.value.active) return;
+  const ALLOW_MANUAL_DEPART = true;           //NOT SURE IF WANT!!!
+  //if (isManualMode.value) return; // don’t trigger while dragging REMOVED!
+  if (isManualMode.value && !ALLOW_MANUAL_DEPART) return;
+
+
+  const iNext = nextPoiIndex.value;
+  if (iNext == null) return;
+
+  const dNow = distToNextStopWalking_m();
+  if (!Number.isFinite(dNow)) return;
+
+  const P = _departProbe.value;
+  if (P.last_m == null) {
+    P.last_m = dNow;
+    return;
+  }
+
+  const stepGain = P.last_m - dNow; // positive if moving closer this tick
+  if (Math.abs(stepGain) > JITTER_TOL) {
+    P.consecTicks = stepGain > 0 ? P.consecTicks + 1 : Math.max(0, P.consecTicks - 1);
+  }
+
+
+  P.last_m = dNow;
+
+ // Trigger once we are ≥ 15m closer than where we started (baseline)
+  if (Number.isFinite(P.base_m)) {
+    const deltaFromBase = P.base_m - dNow; // >= 15 => left toward next POI
+    if (deltaFromBase >= DEPART_TOTAL_DELTA && P.consecTicks >= MIN_CONSEC_TICKS) {
+      startNavigatingTo(iNext);
+      const nextName = confirmedRoute.value?.stops?.[iNext]?.name || `Stop ${iNext + 1}`;
+      toast(`➡️ Heading to ${nextName}`);
+      P.active = false;
+    }
+  }
+
+}
+
+// mark current stop as arrived
+function markArrived(manual) {
+  if (!confirmedRoute.value?.stops?.length) return;
+  const s = new Set(visitedIdx.value);
+  s.add(currentPoiIndex.value);
+  visitedIdx.value = s;
+  navMode.value = 'arrived';
+
+  // reset walk probe and start depart probe
+  _walkProbe.value   = { active: false, prevDist: null, improvingTicks: 0, basePos: null, baseDist: null };
+  const dBase = distToNextStopWalking_m(); // uses next leg when close, falls back to straight line
+  _departProbe.value = { active: true, base_m: Number.isFinite(dBase) ? dBase : null, last_m: null, consecTicks: 0 };
+
+  if (manual) toast("📍 Marked as arrived");
+}
+// start navigating to a given stop index (or keep current)
+function startNavigatingTo(index) {
+  if (!confirmedRoute.value?.stops?.length) return;
+
+  if (Number.isFinite(index)) {
+    const maxPoi = confirmedRoute.value.stops.length - 1;
+    const newIndex = clamp(index, 0, maxPoi);
+
+    currentPoiIndex.value = newIndex;
+
+    // ✅ leg that goes TO stop newIndex is (newIndex - 1)
+    const maxLeg = (confirmedRoute.value.navigation_legs?.length || 1) - 1;
+    currentNavLegIndex.value = Math.max(0, Math.min(newIndex - 1, maxLeg));
+  }
+
+  navMode.value = 'navigating';
+  _walkProbe.value = { active: false, prevDist: null, improvingTicks: 0, basePos: null, baseDist: null };
+}
+function goToNextStop() {
+  if (!confirmedRoute.value?.stops?.length) return;
+
+  // Only allow if we're at the latest arrived stop
+  if (currentPoiIndex.value !== furthestVisitedIndex.value) {
+    toast("⏪ You’re viewing an earlier stop");
+    return;
+  }
+
+  const i = currentPoiIndex.value + 1;
+  if (i < confirmedRoute.value.stops.length) {
+    startNavigatingTo(i);               // this set leg = i-1 (we already fixed)
+  } else {
+    toast("🎉 Route complete!");
+  }
+}
+
+// Button handler we’ll wire in Step 2
+function onImHereClick() { markArrived(true); }
+
+
 /* ---------------- state ---------------- */
 const timeMin = ref(60);
 const radius = ref(700);
@@ -599,6 +927,7 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 
 const currentNavInfo = computed(() => {
   if (!confirmedRoute.value || isRoutePlanningMode.value || !currentGPSPosition.value) return null;
+  if (navMode.value === 'arrived') return null;
   
   const stops = confirmedRoute.value.stops || [];
   const navLegs = confirmedRoute.value.navigation_legs || [];
@@ -1097,6 +1426,11 @@ function toggleMode() {
     displayRoute(confirmedRoute.value);
     selectedEndStart.value = false;  //From oliver
     stopNavigationTracking();
+    currentNavLegIndex.value = 0;
+    currentPoiIndex.value = Math.min(1, (confirmedRoute.value.stops?.length || 1) - 1);
+    navMode.value = 'navigating';
+    //zoomToCurrentPoi();
+    startNavigationTracking();
   } else if (confirmedRoute.value) {
     // When switching to navigation mode, focus on current POI
     zoomToCurrentPoi();
@@ -1537,9 +1871,14 @@ async function nextRoute() {
 }
 
 function confirmRoute() {
+  navMode.value = 'navigating';
+  visitedIdx.value = new Set();
+  currentPoiIndex.value = Math.min(1, (confirmedRoute.value?.stops?.length || 1) - 1);
+  currentNavLegIndex.value = 0; // leg 0 = start -> stop 1
+
   selectedPoi.value = null; 
   confirmedRoute.value = generatedRoutes.value[currentRouteIndex.value];
-  currentPoiIndex.value = 0;
+  currentPoiIndex.value = Math.min(1, (confirmedRoute.value?.stops?.length || 1) - 1);
   currentNavLegIndex.value = 0; // Reset navigation leg index to start with first leg
   isRoutePlanningMode.value = false;
   selectedEndStart.value = false; // THIS ONE, OLIVER WANTED TO REMOVE, NOT SURE WHY
@@ -1842,6 +2181,8 @@ function clearRouteDisplay() {
 function resetPlanningState() {
   // map layers
   clearRouteDisplay();
+  navMode.value = 'navigating';
+  visitedIdx.value = new Set();
 
   // navigation tracking + simulated GPS marker
   stopNavigationTracking();
@@ -2024,7 +2365,13 @@ watch(currentNavInfo, (navInfo) => {
   }
 }); */
 
-watch(currentGPSPosition, evaluateArrival);
+//watch(currentGPSPosition, evaluateArrival);
+
+watch(currentGPSPosition, () => {
+  // tick both arrival debounce and depart probe on any position update
+  maybeAutoDepartFromArrived();
+  evaluateArrival();
+});
 
 // Watch for changes in currentPoiIndex and automatically zoom/pan to that stop
 // This works both when manually switching stops AND when automatically arriving at a stop
@@ -2039,34 +2386,29 @@ watch(currentPoiIndex, (newIndex, oldIndex) => {
   } else {
     // In navigation mode, update markers and zoom/pan to the stop
     updateRoutePoiMarkers();
-    zoomToCurrentPoi();
+    //zoomToCurrentPoi();
     
     const isManualJump = poiIndexChangeReason.value === 'manual';
     // If manually switching stops (not auto-arrival), move the GPS marker to simulate position
     // Only do this if the index actually changed (avoid on initial mount)
-    if (oldIndex !== undefined && oldIndex !== null && newIndex !== oldIndex && currentLocationMarker && isManualJump) {
+    if (
+      teleportOnManualJump.value &&
+      oldIndex !== undefined && oldIndex !== null &&
+      newIndex !== oldIndex &&
+      currentLocationMarker &&
+      isManualJump
+    ) {
       const stop = confirmedRoute.value.stops[newIndex];
       if (stop) {
-        // Set manual mode temporarily to prevent GPS from overriding
         isManualMode.value = true;
-        
-        // Move the marker to the selected stop's position
         const newPos = [stop.lat, stop.lon];
         currentLocationMarker.setLatLng(newPos);
         currentGPSPosition.value = newPos;
-        
-        // Update navigation leg index to match the selected stop
-        // If we're at stop i, we're traveling from stop i-1 to stop i, so leg index is i-1
-        // For stop 0, leg index is 0
         if (newIndex > 0) {
           currentNavLegIndex.value = newIndex - 1;
         } else {
           currentNavLegIndex.value = 0;
         }
-        
-        // Note: We keep manual mode active so user can see the simulation
-        // They can reset to actual GPS when ready
-
       }
     }
   }
@@ -2077,6 +2419,7 @@ watch(currentPoiIndex, (newIndex, oldIndex) => {
 
 function evaluateArrival() {
   if (!confirmedRoute.value || isRoutePlanningMode.value) return;
+  if (navMode.value === 'arrived') return; // ← prevent re-firing while parked at a stop
 
   const navInfo = currentNavInfo.value;
   if (!navInfo) return;
@@ -2089,13 +2432,13 @@ function evaluateArrival() {
     if (!arrivalCandidateStartedAt.value) arrivalCandidateStartedAt.value = now;
     const elapsed = now - arrivalCandidateStartedAt.value;
     if (elapsed >= ARRIVAL_DEBOUNCE_S) {
-      const legs = confirmedRoute.value.navigation_legs || [];
-      if (currentNavLegIndex.value < legs.length - 1) {
-        currentNavLegIndex.value += 1;
-        currentPoiIndex.value = Math.min(currentPoiIndex.value + 1, (confirmedRoute.value.stops?.length || 1) - 1);
-      } else {
-        toast("🎉 Route complete!");
-      }
+      // Destination of the current leg
+      const destIdx = Math.min(
+        (currentNavLegIndex.value + 1),
+        (confirmedRoute.value.stops?.length || 1) - 1
+      );
+      currentPoiIndex.value = destIdx;   // <- show the place we actually arrived at
+      markArrived(false);                // sets navMode='arrived' + visited
       arrivalCandidateStartedAt.value = null;
     }
   } else {
@@ -2220,11 +2563,13 @@ function startNavigationTracking() {
   geoWatchId = navigator.geolocation.watchPosition(
     ({ coords }) => {
       // Don't update if user is manually dragging
-      if (isManualMode.value) return;
+
       
       const p = [coords.latitude, coords.longitude];
       currentGPSPosition.value = p; // Update GPS position for navigation calculations
-      
+      maybeAutoDepartFromArrived();
+      if (isManualMode.value) return;
+
       if (!currentLocationMarker) {
         currentLocationMarker = L.marker(p, { 
           icon: currentLocationIcon, 
@@ -3813,4 +4158,69 @@ html, body, #app {
   opacity: .9;
   margin-top: 2px;
 }
+
+
+
+
+
+.route-summary {
+  position: relative;
+}
+
+.poi-browse-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 6px;
+}
+
+.browse-btn {
+  background: #f2f3f5;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: .9rem;
+  cursor: pointer;
+}
+.browse-btn:disabled { opacity: .4; cursor: default; }
+
+.next-peek {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f7f8ff;
+}
+.peek-label {
+  font-size: .75rem;
+  opacity: .7;
+  margin-bottom: 2px;
+}
+.peek-title {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.poi-quick-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+.nav-mode.arrived .poi-navigation-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+.nav-btn.next {
+  background: #6a5cff;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.peek-title { color: #0b1220; }
+
+.peek-label{ color: #0b1220; }
+
 </style>
