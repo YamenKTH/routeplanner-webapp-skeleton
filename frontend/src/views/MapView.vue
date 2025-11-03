@@ -103,10 +103,32 @@
     <!-- Bottom sheet -->
     <div class="bottom-sheet" :style="sheetStyle">
       <!-- Drag handle -->
+      <!-- Drag handle + Skip button -->
       <div class="sheet-handle-area" @pointerdown="onPointerDown">
+        <!-- Skip stop (top-left corner, always visible when in route view) -->
+        <button
+          v-if="confirmedRoute && !isRoutePlanningMode && !selectedPoi"
+          class="skip-stop-btn"
+          @click.stop
+          @pointerdown.stop
+          title="(Coming soon) Skip this stop"
+          disabled
+        >
+          Skip stop
+        </button>
+
+        <!-- Handle lines -->
         <div class="sheet-handle-lines">
           <span></span><span></span>
         </div>
+        <div
+          class="handle-arrows"
+          v-if="confirmedRoute && !isRoutePlanningMode && confirmedRoute.stops?.length > 1"
+        >
+          <button class="browse-btn small" @click="prevPoi" :disabled="currentPoiIndex === 0">◀</button>
+          <button class="browse-btn small" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">▶</button>
+        </div>
+
       </div>
 
       <div class="sheet-content">
@@ -114,16 +136,15 @@
         <div v-if="confirmedRoute && !isRoutePlanningMode && !selectedPoi" class="route-navigation-view">
           <!-- Top bar: stats + tiny browse arrows (top-right) -->
           <!-- Top bar: only show stats while navigating, always keep arrows -->
-          <div class="route-summary">
-            <div v-if="!isArrived && currentPoiIndex === destIndex" class="route-stats">
+          <!-- Show route summary ONLY while navigating the current destination -->
+          <div
+            v-if="!isArrived && currentPoiIndex === destIndex"
+            class="route-summary"
+          >
+            <div class="route-stats">
               <span class="stat">📍 {{ confirmedRoute.stops.length }} stops</span>
               <span class="stat">📏 {{ confirmedRoute.distance }} km</span>
-              <span class="stat">🕒 {{ confirmedRoute.time }}</span>
-            </div>
-
-            <div class="poi-browse-controls">
-              <button class="browse-btn" @click="prevPoi" :disabled="currentPoiIndex === 0">◀</button>
-              <button class="browse-btn" @click="nextPoi" :disabled="currentPoiIndex === confirmedRoute.stops.length - 1">▶</button>
+              <span class="stat">🕒 {{ confirmedRoute.time }} left</span>
             </div>
           </div>
 
@@ -3316,6 +3337,64 @@ html, body, #app {
   cursor: grab;
   user-select: none;
   touch-action: none;
+  position: relative;
+}
+
+.handle-arrows{
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 6px;
+  z-index: 3;                /* above the handle lines */
+}
+
+.browse-btn.small{
+  background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.35);
+  color: #eef4ff;
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: .9rem;
+  font-weight: 800;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+.browse-btn.small:disabled{
+  opacity: .45;
+  cursor: default;
+}
+
+.skip-stop-btn {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: default;
+  background: rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.35);
+  color: #eef4ff;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.skip-stop-btn:not(:disabled) {
+  cursor: pointer;
+}
+
+.skip-stop-btn:not(:disabled):hover {
+  background: rgba(255,255,255,0.22);
+}
+  
+.skip-stop-btn:disabled {
+  opacity: 0.55;
 }
 
 .sheet-handle-lines {
