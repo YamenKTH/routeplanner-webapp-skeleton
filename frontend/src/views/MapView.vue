@@ -1644,7 +1644,7 @@ const STATES = ["peek", "mid", "expanded"];
 
 const STATE_POS_MAP = {
   planning: { peek: 88, mid: 1,  expanded: 0 },  
-  poi:      { peek: 88, mid: 42, expanded: 0 },  
+  poi:      { peek: 88, mid: 40, expanded: 0 },  
 };
 
 // Which set is active now?
