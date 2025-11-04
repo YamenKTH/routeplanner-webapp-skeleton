@@ -638,6 +638,7 @@ function onRowTouchEnd(e, stop) {
 }
 
 // Search BAR STUFF!
+let markerIndex = new Map();
 const searchQuery = ref('');
 const showSuggestions = ref(false);
 const highlightedIdx = ref(-1);
@@ -668,10 +669,27 @@ const suggestions = computed(() => {
 // Exactly mimic a map-click when selecting a suggestion
 function selectSuggestion(poi) {
   if (!poi) return;
-  const m = findMarkerForStop(poi); // your existing helper
+
+  const key = poiKey(poi);
+  const m = markerIndex.get(key);
+
   if (m) {
-    m.fire('click'); // will run your existing marker click handler
+    const latlng = m.getLatLng();
+
+    // If it's managed by MarkerClusterGroup, use zoomToShowLayer, then click
+    if (poiCluster && poiCluster.hasLayer(m) && typeof poiCluster.zoomToShowLayer === 'function') {
+      poiCluster.zoomToShowLayer(m, () => {
+        // center gently and fire the marker's real click
+        if (map && !map.getBounds().contains(latlng)) map.panTo(latlng);
+        m.fire('click');
+      });
+    } else {
+      // Not clustered (e.g., routePoisLayer) — just pan and click
+      if (map && !map.getBounds().contains(latlng)) map.panTo(latlng);
+      m.fire('click');
+    }
   } else {
+    // Fallback: behave like a click as much as possible
     openPoiInSheet(poi);
     if (poi.lat && poi.lon) {
       const z = map?.getZoom?.() ?? 0;
@@ -679,6 +697,8 @@ function selectSuggestion(poi) {
       else map.panTo([poi.lat, poi.lon]);
     }
   }
+
+  // UI tidy-up
   searchQuery.value = poi.name || '';
   showSuggestions.value = false;
   highlightedIdx.value = -1;
@@ -706,12 +726,25 @@ function onSearchKeydown(e) {
   }
 }
 
-// Defer the actual selection by one microtask to avoid DOM tear-down races
+// WORKS MOST OF THE TIME WELL!
 function onSuggestionPick(poi) {
   queueMicrotask(() => {
     selectSuggestion(poi); // your existing function that fires marker click etc.
   });
 }
+
+//is a bit stranger, but sort of works. 
+/* function onSuggestionPick(poi) {
+  // Run the selection logic twice: immediately + one quick retry
+  queueMicrotask(() => {
+    selectSuggestion(poi);
+
+    // Short retry: in case the marker wasn't visible yet (cluster expanding)
+    setTimeout(() => {
+      selectSuggestion(poi);
+    }, 50); // 0.1s – fast enough to feel instant
+  });
+} */
 
 // Optional: hide suggestions if input loses focus (delay to allow mousedown)
 function onSearchBlur() {
@@ -2159,6 +2192,7 @@ async function loadPois() {
   }
 
   loadedPois.value = [];
+  markerIndex.clear();
   // Build stop index & book-keeping of which stops we’ve seen from the API
   const routeIdx = buildActiveRouteIndex();
   const seenStopKeys = new Set();
@@ -2226,6 +2260,8 @@ async function loadPois() {
     if (inRoute) routePoisLayer.addLayer(marker);
     else poiCluster.addLayer(marker);
 
+    markerIndex.set(poiKey(baseProps), marker);
+
     loadedPois.value.push({
       ...baseProps,
       kinds: Array.isArray(baseProps.kinds)
@@ -2272,6 +2308,7 @@ async function loadPois() {
     addClickHandler(m, baseProps);
     routePoisLayer.addLayer(m);
     loadedPois.value.push(baseProps);
+    markerIndex.set(poiKey(baseProps), m);
   }
 }
 
