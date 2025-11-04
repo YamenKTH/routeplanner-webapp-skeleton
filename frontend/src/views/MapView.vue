@@ -378,6 +378,8 @@
                 @click="onPoiRowClick(stop)"
                 @keyup.enter.prevent="onPoiRowClick(stop)"
                 @keyup.space.prevent="onPoiRowClick(stop)"
+                @touchstart.passive="onRowTouchStart"
+                @touchend.passive="onRowTouchEnd($event, stop)"
               >
                 <div class="poi-num">{{ i + 1 }}</div>
                 <div class="poi-main">
@@ -388,7 +390,15 @@
                     <a v-if="stop.wiki_url" :href="stop.wiki_url" target="_blank" rel="noopener" class="poi-link">Open article ↗</a>
                   </div>
                 </div>
-                <div class="poi-affordance">›</div> <!-- subtle chevron -->
+
+                <!-- explicit affordance button; also triggers open -->
+                <button
+                  class="poi-open"
+                  aria-label="Open details"
+                  @click.stop="onPoiRowClick(stop)"
+                >
+                  ›
+                </button>
               </div>
 
             </div>
@@ -553,6 +563,28 @@ function truncate(text, n = 160) {
   return text.length > n ? text.slice(0, n).trimEnd() + '…' : text;
 }
 
+let _touchStartX = 0, _touchStartY = 0, _touchStartT = 0;
+
+function onRowTouchStart(e) {
+  const t = e.changedTouches?.[0];
+  if (!t) return;
+  _touchStartX = t.clientX;
+  _touchStartY = t.clientY;
+  _touchStartT = e.timeStamp || Date.now();
+}
+
+function onRowTouchEnd(e, stop) {
+  const t = e.changedTouches?.[0];
+  if (!t) return;
+  const dx = Math.abs(t.clientX - _touchStartX);
+  const dy = Math.abs(t.clientY - _touchStartY);
+  const dt = (e.timeStamp || Date.now()) - _touchStartT;
+
+  // treat as a tap only if finger didn't move much and it was quick
+  if (dx < 8 && dy < 8 && dt < 400) {
+    onPoiRowClick(stop);
+  }
+}
 
 
 // --- New tour state (JS) ---
@@ -5011,4 +5043,55 @@ html, body, #app {
 .poi-row.clickable:active { transform: translateY(1px); }
 .poi-affordance { margin-left: 8px; opacity: .7; font-weight: 800; }
 .poi-row:hover .poi-affordance { opacity: .95; }
+
+
+
+/* make rows feel tappable but not shouty */
+.poi-row.clickable {
+  cursor: pointer;
+  align-items: center;
+  transition: transform .06s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+  touch-action: pan-y;                 /* allow vertical scroll gestures */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.poi-row.clickable:hover {
+  background: rgba(255,255,255,0.12);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  border-color: rgba(255,255,255,0.28);
+}
+
+.poi-row.clickable:active {
+  transform: translateY(1px);
+}
+
+.poi-row.clickable:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(106, 92, 255, 0.9), 0 4px 14px rgba(0,0,0,0.18);
+}
+
+/* explicit chevron affordance on the right */
+.poi-open {
+  margin-left: 8px;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.10);
+  color: #eef4ff;
+  font-weight: 900;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .06s ease;
+}
+
+.poi-open:hover {
+  background: rgba(255,255,255,0.16);
+  border-color: rgba(255,255,255,0.35);
+}
+
+.poi-open:active { transform: translateY(1px); }
+
 </style>
