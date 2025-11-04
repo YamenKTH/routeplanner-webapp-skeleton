@@ -17,17 +17,17 @@ services:
       - ./backend:/app
       - ./backend/osrm-data:/data
 
-  frontend:
+  ffrontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
     depends_on:
       - backend
     networks:
       - app-network
-    # Optional: if your Vue app uses env vars, pass backend base URL
     environment:
       - VITE_BACKEND_URL=http://backend:8000
 
@@ -35,7 +35,7 @@ services:
     image: osrm/osrm-backend
     command: osrm-routed --algorithm mld /data/sweden-latest.osrm
     ports:
-      - "5000:5000"
+      - "5050:5000"
     volumes:
       - ./backend/osrm-data:/data
     networks:
