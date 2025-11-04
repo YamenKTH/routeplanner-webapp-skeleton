@@ -295,21 +295,27 @@
         >
 
           <!-- Sticky Header -->
-          <div class="poi-sheet-header">
-            <h3 class="panel-title">{{ selectedPoi.name || 'Place' }}</h3>
+          <div class="poi-sheet-header" style="padding:4px 10px 2px">
+            <h3 class="panel-title" style="margin:0 0 2px; font-size:.98rem">
+              {{ selectedPoi.name || 'Place' }}
+            </h3>
             <button class="close-sheet-btn" @click="clearSelectedPoi">✕</button>
           </div>
 
           <!-- Scrollable Body -->
-          <div class="poi-scroll">
-            <div class="poi-meta">
-              <div class="poi-line">
-              </div>
-            <div class="poi-extract" :class="{ clamped: shouldClamp && !showFullExtract }">
-              {{ selectedPoi.extractFull }}
-            </div>
+          <div class="poi-scroll" style="padding-top:4px">
+            <div class="poi-meta" style="margin-top:0">
+              <!-- This empty row creates extra height on some builds; hide it -->
+              <div class="poi-line" style="display:none"></div>
 
-              <!-- Inline actions (old Read more style + Open article, separated by •) -->
+              <div
+                class="poi-extract"
+                :class="{ clamped: shouldClamp && !showFullExtract }"
+                :style="{ margin: '2px 0 6px', lineHeight: '1.26' }"
+              >
+                {{ selectedPoi.extractFull }}
+              </div>
+
               <div class="read-actions">
                 <template v-if="shouldClamp">
                   <button class="text-link" @click="onToggleReadMore">
@@ -323,33 +329,28 @@
                     :href="`https://${selectedPoi.wv.project}/wiki/${selectedPoi.wv.title}`"
                     target="_blank"
                     class="text-link"
-                  >
-                    Open article
-                  </a>
+                  >Open article</a>
                 </template>
 
-                <!-- Views + score -->
-                <span class="views" v-if="selectedPoi.wv">
+                <span class="views" v-if="selectedPoi.wv" style="margin:0; line-height:1.2">
                   📖 {{ (selectedPoi.wv.views_365 || 0).toLocaleString() }} views
                   <span v-if="selectedPoi.devScore !== null">
                     &nbsp;•&nbsp;⭐ {{ Number(selectedPoi.devScore).toFixed(2) }}
                   </span>
                 </span>
 
-                <!-- Categories last - (truncated in compact, full when expanded) -->
                 <div
                   v-if="(selectedPoi.kindsArr || []).length"
                   class="categories-line"
                   :class="{ clamped: !showFullExtract }"
+                  style="margin-top:0; line-height:1.18"
                 >
                   <strong>Categories:</strong>
                   {{ (showFullExtract ? selectedPoi.kindsArr : selectedPoi.kindsArr.slice(0, 6)).join(', ') }}
                 </div>
               </div>
-
-              
-
             </div>
+
               <!-- Docked Footer (always same place) -->
             <div class="poi-actions docked">
               <button
@@ -2929,7 +2930,8 @@ function evaluateArrival() {
     );
   }
 
-
+//NOW IT PROBABLY OK?
+//think maybe
   if (onPath && alongLeft <= ARRIVAL_RADIUS || (directLeft <= HERE_CHECK_RADIUS)) {
     if (!arrivalCandidateStartedAt.value) arrivalCandidateStartedAt.value = now;
     const elapsed = now - arrivalCandidateStartedAt.value;
@@ -5363,4 +5365,68 @@ html, body, #app {
 
 .poi-suggestion-meta .sep { margin: 0 6px; color: #c0c4cc; }
 
+.poi-details-sheet .panel-title {
+  margin-bottom: 4px; /* was probably ~10–12px */
+}
+
+.poi-details-sheet .poi-extract {
+  margin-top: 4px;
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.poi-details-sheet .read-actions {
+  margin-top: 2px;
+  gap: 6px 10px;
+}
+
+.poi-details-sheet .categories-line {
+  margin-top: 0;
+  line-height: 1.2;
+}
+
+
+.bottom-sheet .poi-details-sheet .poi-sheet-header {
+  padding: 6px 10px !important;
+}
+
+.bottom-sheet .poi-details-sheet .panel-title {
+  margin: 0 0 2px !important;
+  font-size: 0.98rem;
+}
+
+.bottom-sheet .poi-details-sheet .poi-extract {
+  margin: 4px 0 6px !important;
+  line-height: 1.28 !important;
+}
+
+.bottom-sheet .poi-details-sheet .read-actions {
+  margin-top: 2px !important;
+  gap: 4px 8px !important;
+}
+
+.bottom-sheet .poi-details-sheet .views {
+  margin: 0 !important;
+  line-height: 1.2 !important;
+}
+
+.bottom-sheet .poi-details-sheet .categories-line {
+  margin-top: 0 !important;
+  line-height: 1.18 !important;
+}
+
+.bottom-sheet .poi-details-sheet .poi-actions .action {
+  padding: 9px 10px !important;
+}
+
+/* tighten ONLY the gap between extract and the read-actions row */
+.bottom-sheet .poi-details-sheet .poi-extract {
+  margin-bottom: -2px !important;   /* was ~6px */
+}
+
+.bottom-sheet .poi-details-sheet .read-actions {
+  margin-top: 0 !important;        /* sit right under the extract */
+  row-gap: 0 !important;           /* no extra vertical flex gap */
+  column-gap: 8px;                 /* keep horizontal spacing */
+}
 </style>
