@@ -5305,26 +5305,26 @@ html, body, #app {
 .poi-open:active { transform: translateY(1px); }
 
 
-/* --- Search UI --- */
+/* --- Search UI --- quite good now*/
+*, *::before, *::after { box-sizing: border-box; }
+
+/* Replace your .poi-search block with this */
 .poi-search {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(640px, 92vw);
-  z-index: 1100; /* above markers/banners */
-  pointer-events: auto; /* ensure touches go to the input, not the map */
+  top: calc(env(safe-area-inset-top, 0px) + 14px); /* a little lower = more breathing room */
+  inset-inline: 8%;              /* smaller inset makes it visually wider */
+  max-inline-size: 720px;        /* allow a bit more width on large screens */
+  margin-inline: auto;
+  z-index: 1100;
+  pointer-events: auto;
 }
 
+/* input slightly chunkier */
 .poi-search-input {
   width: 100%;
-  border: 1px solid #d0d7e2;
-  background: #ffffff;
-  border-radius: 10px;
-  padding: 12px 14px; /* slightly larger for thumbs */
-  font-size: 16px;    /* 16px prevents iOS zoom-on-focus */
-  outline: none;
-  box-shadow: 0 2px 10px rgba(10,20,40,.07);
+  padding: 9px 14px;   /* ↓ reduce vertical padding (was 14px) */
+  font-size: 16px;     /* slightly smaller text */
+  border-radius: 10px; /* tighten the curve to match the slimmer height */
 }
 
 .poi-suggestions {
