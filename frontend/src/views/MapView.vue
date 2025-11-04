@@ -288,10 +288,10 @@
         
         <!-- POI DETAILS VIEW (opens when a map marker is clicked) -->
         <!-- POI DETAILS VIEW -->
+        <!-- POI DETAILS VIEW -->
         <div
           v-else-if="selectedPoi"
-          class="poi-details-sheet"
-          :class="{ expanded: showFullExtract }"
+          :class="['poi-details-sheet', { expanded: showFullExtract, compact: isPoiCompact }]"
         >
 
           <!-- Sticky Header -->
@@ -302,10 +302,9 @@
             <button class="close-sheet-btn" @click="clearSelectedPoi">✕</button>
           </div>
 
-          <!-- Scrollable Body -->
+          <!-- Scroll container (footer is INSIDE and sticky relative to this) -->
           <div class="poi-scroll" style="padding-top:4px">
             <div class="poi-meta" style="margin-top:0">
-              <!-- This empty row creates extra height on some builds; hide it -->
               <div class="poi-line" style="display:none"></div>
 
               <div
@@ -332,7 +331,7 @@
                   >Open article</a>
                 </template>
 
-                <span class="views" v-if="selectedPoi.wv" style="margin:0; line-height:1.2">
+                <span class="views" v-if="selectedPoi.wv" style="margin:0; lineHeight:1.2">
                   📖 {{ (selectedPoi.wv.views_365 || 0).toLocaleString() }} views
                   <span v-if="selectedPoi.devScore !== null">
                     &nbsp;•&nbsp;⭐ {{ Number(selectedPoi.devScore).toFixed(2) }}
@@ -351,8 +350,8 @@
               </div>
             </div>
 
-              <!-- Docked Footer (always same place) -->
-            <div class="poi-actions docked">
+            <!-- Sticky footer lives INSIDE the scroller -->
+            <div class="poi-actions sticky">
               <button
                 v-if="isPoiInActiveRoute(selectedPoi)"
                 class="action danger"
@@ -374,9 +373,7 @@
                 <button class="action danger" @click="setAsEnd(selectedPoi.lat, selectedPoi.lon)">End</button>
               </div>
             </div>
-            
           </div>
-
         </div>
 
 
@@ -4474,7 +4471,7 @@ html, body, #app {
   /* already present… we’ll extend it */
   display: grid;                         /* NEW: 3-row grid */
   grid-template-rows: auto 1fr auto;     /* header / scroll / footer */
-  height: 58vh;
+  height: 58dvh;
   min-height: 280px;
   overflow: hidden;
   /* keep your existing props here (background, etc.) */
@@ -5431,4 +5428,70 @@ html, body, #app {
   row-gap: 0 !important;           /* no extra vertical flex gap */
   column-gap: 8px;                 /* keep horizontal spacing */
 }
+
+
+/* Height clamp uses dvh so browser chrome doesn't break layout */
+.poi-details-sheet {
+  display: grid;
+  grid-template-rows: auto 1fr;   /* header | scroller (footer is inside scroller) */
+  height: 58dvh;                  /* was 58vh */
+  min-height: 280px;
+  overflow: hidden;               /* .poi-scroll does the scrolling */
+  /* a local var we use for padding/spacing math */
+  --poi-footer-h: 60px;
+}
+
+/* Compact variant for short POIs: tighter, less bulky */
+.poi-details-sheet.compact {
+  height: 44dvh;                  /* looks MUCH better on small phones */
+  --poi-footer-h: 52px;
+}
+
+/* Scroller (holds content and the sticky footer) */
+.poi-scroll{
+  overflow-y: auto;
+  padding: 8px 10px;
+  /* leave room so last lines aren't under the sticky footer */
+  padding-bottom: calc(10px + var(--poi-footer-h) + env(safe-area-inset-bottom));
+}
+
+/* Footer sticks above the bottom/home indicator but does not overlay content while at rest */
+.poi-actions.sticky{
+  position: sticky;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 2;
+  padding: 10px 8px;
+  min-height: var(--poi-footer-h);
+  display: grid;
+  gap: 8px;
+  background: linear-gradient(180deg, rgba(15,22,32,0.04), rgba(15,22,32,0.72));
+  border-top: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 -6px 14px rgba(0,0,0,0.25);
+}
+
+/* When compact, slightly smaller buttons and tighter grid */
+.poi-details-sheet.compact .poi-actions.sticky {
+  gap: 6px;
+}
+
+/* Buttons a touch slimmer so they don't dominate */
+.poi-actions .action { padding: 10px; font-weight: 700; }
+.poi-details-sheet.compact .poi-actions .action { padding: 9px; }
+
+/* Two-button row layout looks cleaner */
+.poi-actions .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* Header: tighter in compact mode */
+.poi-details-sheet.compact .poi-sheet-header {
+  padding: 4px 10px;
+}
+.poi-details-sheet.compact .panel-title {
+  font-size: .95rem;
+}
+
+/* Extract + meta spacing a hair tighter in compact */
+.poi-details-sheet.compact .poi-extract { margin: 2px 0 4px !important; line-height: 1.26 !important; }
+.poi-details-sheet.compact .read-actions { margin-top: 0 !important; gap: 4px 8px !important; }
 </style>
