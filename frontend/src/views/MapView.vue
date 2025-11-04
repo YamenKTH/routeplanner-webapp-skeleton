@@ -732,6 +732,7 @@ function onSuggestionPick(poi) {
   queueMicrotask(() => {
     selectSuggestion(poi); // your existing function that fires marker click etc.
   });
+  toast('No POI info? 👉 Try again.');
 }
 
 //is a bit stranger, but sort of works. 
@@ -871,6 +872,7 @@ function highlightMarker(marker, props) {
 
 function onPoiRowClick(stop) {
   // Build a props shape that openPoiInSheet understands
+  toast('No POI info? 👉 Click again.');
   const props = {
     ...stop,
     lat: stop.lat,
