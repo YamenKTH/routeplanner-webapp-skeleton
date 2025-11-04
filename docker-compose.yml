@@ -17,7 +17,7 @@ services:
       - ./backend:/app
       - ./backend/osrm-data:/data
 
-  ffrontend:
+  frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
@@ -30,7 +30,10 @@ services:
       - app-network
     environment:
       - VITE_BACKEND_URL=http://backend:8000
-
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt/live/minutetoure.duckdns.org/fullchain.pem:/etc/ssl/certs/fullchain.pem:ro
+      - /etc/letsencrypt/live/minutetoure.duckdns.org/privkey.pem:/etc/ssl/private/privkey.pem:ro
   osrm:
     image: osrm/osrm-backend
     command: osrm-routed --algorithm mld /data/sweden-latest.osrm
