@@ -1,5 +1,55 @@
 <template>
   <div id="map-container">
+    <!-- Search (planning + confirm only) -->
+    <div
+      v-if="isRoutePlanningMode"
+      class="poi-search"
+      @pointerdown.stop
+      @click.stop
+      @keydown.stop
+    >
+      <input
+        class="poi-search-input"
+        type="search"
+        inputmode="search"
+        enterkeyhint="search"
+        autocapitalize="off"
+        autocorrect="off"
+        autocomplete="off"
+        v-model="searchQuery"
+        placeholder="Search loaded POIs…"
+        @focus="showSuggestions = true"
+        @blur="onSearchBlur"
+        @input="showSuggestions = true; highlightedIdx = -1"
+        @keydown="onSearchKeydown"
+      />
+
+      <ul
+        v-show="showSuggestions && searchQuery && suggestions.length"
+        class="poi-suggestions"
+        role="listbox"
+        :aria-hidden="!(showSuggestions && searchQuery && suggestions.length)"
+      >
+        <!-- Clicking suggestion should not blur input before handler runs -->
+        <!-- (mousedown prevents blur on desktop; touch works via pointerdown.stop on container) -->
+        <li
+          v-for="(s, i) in suggestions"
+          :key="poiKey(s) + '|' + i"
+          :class="['poi-suggestion', { highlighted: i === highlightedIdx }]"
+          role="option"
+          @pointerdown.prevent.stop="onSuggestionPick(s)"
+          @mouseenter="highlightedIdx = i"
+        >
+          <div class="poi-suggestion-name">{{ s.name || 'Place' }}</div>
+          <div class="poi-suggestion-meta">
+            <span v-if="Array.isArray(s.kinds) && s.kinds.length">{{ s.kinds.slice(0,3).join(', ') }}</span>
+            <span class="sep" v-if="Array.isArray(s.kinds) && s.kinds.length">•</span>
+            <span>{{ s.lat.toFixed(4) }}, {{ s.lon.toFixed(4) }}</span>
+          </div>
+        </li>
+      </ul>
+    </div>
+
     <div id="map"></div>
 
     <!-- Navigation Banner (Google Maps style) -->
@@ -585,6 +635,90 @@ function onRowTouchEnd(e, stop) {
   if (dx < 8 && dy < 8 && dt < 400) {
     onPoiRowClick(stop);
   }
+}
+
+// Search BAR STUFF!
+const searchQuery = ref('');
+const showSuggestions = ref(false);
+const highlightedIdx = ref(-1);
+const loadedPois = ref([]); // declare ONCE
+
+// Suggestions from loaded POIs only
+const suggestions = computed(() => {
+  const q = (searchQuery.value || '').trim().toLowerCase();
+  if (!q) return [];
+  const seen = new Set();
+  const out = [];
+  for (const p of loadedPois.value) {
+    const name = (p.name || '').toLowerCase();
+    const cats = Array.isArray(p.kinds) ? p.kinds.join(',').toLowerCase()
+                                        : String(p.kinds || '').toLowerCase();
+    if (name.includes(q) || cats.includes(q)) {
+      const k = poiKey(p); // you already have this helper
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(p);
+      }
+    }
+    if (out.length >= 10) break;
+  }
+  return out;
+});
+
+// Exactly mimic a map-click when selecting a suggestion
+function selectSuggestion(poi) {
+  if (!poi) return;
+  const m = findMarkerForStop(poi); // your existing helper
+  if (m) {
+    m.fire('click'); // will run your existing marker click handler
+  } else {
+    openPoiInSheet(poi);
+    if (poi.lat && poi.lon) {
+      const z = map?.getZoom?.() ?? 0;
+      if (z < 17) map.setView([poi.lat, poi.lon], 17);
+      else map.panTo([poi.lat, poi.lon]);
+    }
+  }
+  searchQuery.value = poi.name || '';
+  showSuggestions.value = false;
+  highlightedIdx.value = -1;
+}
+
+function onSearchKeydown(e) {
+  if (!showSuggestions.value && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    showSuggestions.value = true;
+  }
+  if (!suggestions.value.length) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    highlightedIdx.value = (highlightedIdx.value + 1) % suggestions.value.length;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    highlightedIdx.value = (highlightedIdx.value - 1 + suggestions.value.length) % suggestions.value.length;
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const pick = suggestions.value[Math.max(0, highlightedIdx.value)];
+    selectSuggestion(pick || suggestions.value[0]);
+  } else if (e.key === 'Escape') {
+    showSuggestions.value = false;
+    highlightedIdx.value = -1;
+  }
+}
+
+// Defer the actual selection by one microtask to avoid DOM tear-down races
+function onSuggestionPick(poi) {
+  queueMicrotask(() => {
+    selectSuggestion(poi); // your existing function that fires marker click etc.
+  });
+}
+
+// Optional: hide suggestions if input loses focus (delay to allow mousedown)
+function onSearchBlur() {
+  setTimeout(() => {
+    showSuggestions.value = false;
+    highlightedIdx.value = -1;
+  }, 0);
 }
 
 
@@ -2024,6 +2158,7 @@ async function loadPois() {
     routePoisLayer.clearLayers();
   }
 
+  loadedPois.value = [];
   // Build stop index & book-keeping of which stops we’ve seen from the API
   const routeIdx = buildActiveRouteIndex();
   const seenStopKeys = new Set();
@@ -2090,7 +2225,16 @@ async function loadPois() {
 
     if (inRoute) routePoisLayer.addLayer(marker);
     else poiCluster.addLayer(marker);
+
+    loadedPois.value.push({
+      ...baseProps,
+      kinds: Array.isArray(baseProps.kinds)
+        ? baseProps.kinds
+        : (baseProps.kinds ? String(baseProps.kinds).split(',').map(s => s.trim()) : []),
+    });
   }
+
+  
 
   // 2) Inject any route stops that the API didn’t return (so user still sees/can click them)
   const r = activeRoute.value;
@@ -2127,6 +2271,7 @@ async function loadPois() {
     m.options._routeStopIndex = i;
     addClickHandler(m, baseProps);
     routePoisLayer.addLayer(m);
+    loadedPois.value.push(baseProps);
   }
 }
 
@@ -5121,5 +5266,64 @@ html, body, #app {
 }
 
 .poi-open:active { transform: translateY(1px); }
+
+
+/* --- Search UI --- */
+.poi-search {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, 92vw);
+  z-index: 1100; /* above markers/banners */
+  pointer-events: auto; /* ensure touches go to the input, not the map */
+}
+
+.poi-search-input {
+  width: 100%;
+  border: 1px solid #d0d7e2;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 12px 14px; /* slightly larger for thumbs */
+  font-size: 16px;    /* 16px prevents iOS zoom-on-focus */
+  outline: none;
+  box-shadow: 0 2px 10px rgba(10,20,40,.07);
+}
+
+.poi-suggestions {
+  margin: 6px 0 0;
+  padding: 6px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  border-radius: 10px;
+  max-height: 50vh; /* taller on mobile */
+  overflow: auto;
+  box-shadow: 0 10px 24px rgba(10,20,40,.08);
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+.poi-suggestion {
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.poi-suggestion.highlighted {
+  background: #f4f6fb;
+}
+
+.poi-suggestion-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #101828;
+}
+
+.poi-suggestion-meta {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.poi-suggestion-meta .sep { margin: 0 6px; color: #c0c4cc; }
 
 </style>
