@@ -519,6 +519,7 @@ const ON_PATH_FOR_DISTANCE_TOL = DEVIATION_THRESHOLD; // 30 m is a good start
 
 const ARRIVAL_RADIUS = 12;       // meters remaining along path to count as arrived
 const ARRIVAL_DEBOUNCE_S = 1;    // seconds of sustained proximity
+const HERE_CHECK_RADIUS = 6;
 
 
 const arrivalCandidateStartedAt = ref(null);
@@ -2734,7 +2735,20 @@ function evaluateArrival() {
   const { onPath, traveledDistance_m, legDistance_m } = navInfo;
   const alongLeft = Math.max(0, (legDistance_m || 0) - (traveledDistance_m || 0));
 
-  if (onPath && alongLeft <= ARRIVAL_RADIUS) {
+  const destIdx = Math.min(currentNavLegIndex.value + 1, confirmedRoute.value.stops.length - 1);
+  const destStop = confirmedRoute.value.stops?.[destIdx];
+  let directLeft = Infinity;
+  if (destStop && currentGPSPosition.value) {
+    directLeft = haversineDistance(
+      currentGPSPosition.value[0],
+      currentGPSPosition.value[1],
+      Number(destStop.lat),
+      Number(destStop.lon)
+    );
+  }
+
+
+  if (onPath && alongLeft <= ARRIVAL_RADIUS || (directLeft <= HERE_CHECK_RADIUS)) {
     if (!arrivalCandidateStartedAt.value) arrivalCandidateStartedAt.value = now;
     const elapsed = now - arrivalCandidateStartedAt.value;
     if (elapsed >= ARRIVAL_DEBOUNCE_S) {
