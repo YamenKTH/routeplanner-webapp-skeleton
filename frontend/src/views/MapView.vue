@@ -2082,6 +2082,9 @@ async function loadPois() {
 
     const marker = L.marker([gLat, gLon], opts);
     marker.options.props = baseProps;
+    if (inRoute && routeIdx.has(k)) {
+      marker.options._routeStopIndex = routeIdx.get(k).index;
+    }
     addClickHandler(marker, baseProps);
 
     if (inRoute) routePoisLayer.addLayer(marker);
@@ -2120,6 +2123,7 @@ async function loadPois() {
 
     const m = L.marker([s.lat, s.lon], { icon, pane: 'onroute' });
     m.options.props = baseProps;
+    m.options._routeStopIndex = i;
     addClickHandler(m, baseProps);
     routePoisLayer.addLayer(m);
   }
@@ -2157,6 +2161,15 @@ async function nextRoute() {
     }, 800);
   }
 }
+function removeRouteStartMarker() {
+  if (!routePoisLayer) return;
+  const toRemove = [];
+  routePoisLayer.eachLayer((m) => {
+    if (m?.options?._routeStopIndex === 0) toRemove.push(m);
+  });
+  toRemove.forEach((m) => routePoisLayer.removeLayer(m));
+}
+
 //works quite well 
 function confirmRoute() {
   navMode.value = 'navigating';
@@ -2174,6 +2187,7 @@ function confirmRoute() {
   try { window._stopMarkers?.forEach(m => m.remove()); window._stopMarkers = []; } catch {}
   // Hide the draggable start pin in nav
   if (origin) { origin.setOpacity(0); origin.dragging?.disable(); }
+  removeRouteStartMarker();
   sheetState.value = "mid";
 
   const firstStop = confirmedRoute.value?.stops?.[0];
