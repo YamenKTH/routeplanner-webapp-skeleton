@@ -41,6 +41,21 @@ services:
     networks:
       - app-network
 
+  caddy:
+      image: caddy:2
+      depends_on:
+        - frontend
+        - backend
+      ports:
+        - "80:80"
+        - "443:443"
+      volumes:
+        - ./Caddyfile:/etc/caddy/Caddyfile:ro
+        - caddy_data:/data
+        - caddy_config:/config
+      networks:
+        - app-network      
+
 # Shared network so containers see each other by name
 networks:
   app-network:
