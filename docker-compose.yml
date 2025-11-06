@@ -29,7 +29,7 @@ services:
       - app-network
     # Optional: if your Vue app uses env vars, pass backend base URL
     environment:
-      - VITE_BACKEND_URL=http://backend:8000
+      - VITE_BACKEND_URL=/api
 
   osrm:
     image: osrm/osrm-backend

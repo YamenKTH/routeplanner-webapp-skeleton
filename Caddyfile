@@ -1,14 +1,13 @@
 minutetoure.duckdns.org {
-	encode gzip
+    encode gzip
 
-	# Proxy API to backend
-	@api path /api/*
-	handle @api {
-		reverse_proxy backend:8000
-	}
+    # Strip /api and proxy to backend
+    handle_path /api/* {
+        reverse_proxy backend:8000
+    }
 
-	# Everything else → frontend (serves SPA with its own try_files)
-	handle {
-		reverse_proxy frontend:80
-	}
+    # Everything else → frontend (SPA)
+    handle {
+        reverse_proxy frontend:80
+    }
 }
