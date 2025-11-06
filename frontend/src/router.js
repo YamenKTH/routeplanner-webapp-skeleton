@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 // Global website pages
 import HomeView from './views/HomeView.vue'
-import VisionView from './views/VisionView.vue'
+import PriceView from './views/PriceView.vue'
 import AboutView from './views/AboutView.vue'
 import DemoView from './views/DemoView.vue'
 
@@ -14,7 +14,7 @@ import ProfileView from './views/ProfileView.vue'
 const routes = [
   { path: '/', redirect: '/what-is-x' },
   { path: '/what-is-x', component: HomeView },
-  { path: '/vision', component: VisionView },
+  { path: '/vision', component: PriceView },
   { path: '/about-us', component: AboutView },
   {
     path: '/app-demo',
@@ -28,7 +28,17 @@ const routes = [
   }
 ]
 
-export default createRouter({
+const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  scrollBehavior(to, from, savedPosition) {
+    // If there's a saved position (e.g., browser back button), use it
+    if (savedPosition) {
+      return savedPosition
+    }
+    // Otherwise, scroll to top
+    return { top: 0, behavior: 'smooth' }
+  }
 })
+
+export default router
