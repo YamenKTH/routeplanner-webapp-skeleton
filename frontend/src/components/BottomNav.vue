@@ -33,8 +33,8 @@ const profileIcon = new URL('/src/icons/profileIcon.png', import.meta.url).href
   width: 33px;
   height: 33px;
   object-fit: contain;
-  filter: brightness(0.9);
   transition: filter 0.2s ease;
+  
 }
 
 .active .nav-icon {
@@ -58,28 +58,17 @@ const profileIcon = new URL('/src/icons/profileIcon.png', import.meta.url).href
 
 /* Centered, constrained, below everything (z < sheet) */
 .bottom-nav{
-  position: flex;
-  bottom: 0;
+  position: sticky;
+  bottom: 1%;
   width: 100%;
-  height: 7%;
-
+  height: 6%;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  place-items: center;
-  opacity: 0.85;
-
-  background: rgba(36, 35, 36, 0.664);
-  backdrop-filter: blur(10px) saturate(115%);
-  -webkit-backdrop-filter: blur(10px) saturate(115%);
-  box-shadow: 0 -4px 14px rgba(0,0,0,0.25);
-
-
-
-  z-index:1003; /* your bottom sheet is ~1002, so this sits under it */
+  z-index:1000 /* your bottom sheet is ~1002, so this sits under it */
 }
 
 .nav-btn:not(:last-child) {
-  border-right: 2px solid rgb(255, 255, 255);
+  border-right: 2px solid rgb(0, 0, 0);
 }
 
 .nav-btn{
@@ -89,16 +78,14 @@ const profileIcon = new URL('/src/icons/profileIcon.png', import.meta.url).href
   justify-content: center;
   align-items: center;
   font-size: 1.4rem;
-  color: rgba(255,255,255,0.75);
+  color: rgb(255, 255, 255);
   transition: all 0.2s ease-in-out;
+  background-color: #ffffff;
 }
 .nav-btn:hover{
   transform: translateY(-1px);
   background: rgba(86, 92, 95, 0.911);
 }
 
-.active{
-  background: linear-gradient(135deg, #958fd1 0%, #f854b6 100%);
-  color: #fff;
-}
 </style>
+

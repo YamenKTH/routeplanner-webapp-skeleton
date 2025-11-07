@@ -1,11 +1,13 @@
 <template>
-  <div class="explore">
-    <h2>Explore</h2>
-    <div v-for="(place, i) in demoPlaces" :key="i" class="card">
-      <img :src="place.img" alt="place image" />
-      <div class="info">
-        <h3>{{ place.name }}</h3>
-        <p>{{ place.address }}</p>
+  <div class="page-wraper">
+    <div class="explore">
+      <h2> Explore (currently hard coded)</h2>
+      <div v-for="(place, i) in demoPlaces" :key="i" class="card">
+        <img :src="place.img" alt="place image" />
+        <div class="info">
+          <h3>{{ place.name }}</h3>
+          <p>{{ place.address }}</p>
+        </div>
       </div>
     </div>
   </div>
@@ -21,6 +23,26 @@ const demoPlaces = [
 </script>
 
 <style>
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+}
+.page-wraper {
+  position: fixed;
+  width: 100%;
+  height: 100dvh;
+  overflow: visible;
+  z-index: 10002;  
+    display: grid;        /* or flex, if you want centering */
+
+  /* Optional styling for visibility/debugging */
+  background: rgba(114, 98, 157, 0.582); /* semi-transparent black */
+  backdrop-filter: blur(5px);       /* blur background behind it */
+};
+
+
 .explore {
   padding: 1rem;
 }

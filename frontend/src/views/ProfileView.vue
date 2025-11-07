@@ -1,53 +1,55 @@
 <template>
-  <div class="profile">
-    <!-- Header / Profile Card -->
-    <div class="profile-header">
-      <img class="avatar" src="https://picsum.photos/seed/user/100" alt="Profile picture" />
-      <div class="header-info">
-        <h3>@LilOlli</h3>
-        <p>Name Lastname</p>
-        <p><b>Currently in:</b> Belgrad</p>
+  <div class="page-wraper">
+    <div class="profile">
+      <!-- Header / Profile Card -->
+      <div class="profile-header">
+        <img class="avatar" src="https://picsum.photos/seed/user/100" alt="Profile picture" />
+        <div class="header-info">
+          <h3>@LilOlli</h3>
+          <p>Name Lastname</p>
+          <p><b>Currently in:</b> Belgrad</p>
+        </div>
+        <button class="edit-btn">Edit profile</button>
       </div>
-      <button class="edit-btn">Edit profile</button>
+
+      <!-- My vibe / Preferences -->
+      <section class="vibe">
+        <h3>My vibe</h3>
+        <p class="subtle">Adjust to personalize your Explore page</p>
+
+        <div class="pref-row" v-for="item in prefs" :key="item.label">
+          <div class="left">
+            <span class="emoji">{{ item.icon }}</span>
+            <span class="label">{{ item.label }}</span>
+          </div>
+
+          <div class="right">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              v-model="item.value"
+              class="slider"
+            />
+            <span class="percent">{{ item.value }}%</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Saved spots -->
+      <section class="saved">
+        <h3>Saved spots</h3>
+        <div class="actions">
+          <button class="btn ghost">CLEAR ALL</button>
+          <button class="btn">SAVE PRESET</button>
+          <button class="btn">LOAD PRESET</button>
+        </div>
+      </section>
+
+      <!-- Spacer so content never hides behind bottom nav -->
+      <div class="bottom-spacer" aria-hidden="true"></div>
     </div>
-
-    <!-- My vibe / Preferences -->
-    <section class="vibe">
-      <h3>My vibe</h3>
-      <p class="subtle">Adjust to personalize your Explore page</p>
-
-      <div class="pref-row" v-for="item in prefs" :key="item.label">
-        <div class="left">
-          <span class="emoji">{{ item.icon }}</span>
-          <span class="label">{{ item.label }}</span>
-        </div>
-
-        <div class="right">
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            v-model="item.value"
-            class="slider"
-          />
-          <span class="percent">{{ item.value }}%</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- Saved spots -->
-    <section class="saved">
-      <h3>Saved spots</h3>
-      <div class="actions">
-        <button class="btn ghost">CLEAR ALL</button>
-        <button class="btn">SAVE PRESET</button>
-        <button class="btn">LOAD PRESET</button>
-      </div>
-    </section>
-
-    <!-- Spacer so content never hides behind bottom nav -->
-    <div class="bottom-spacer" aria-hidden="true"></div>
   </div>
 </template>
 
@@ -64,6 +66,15 @@ const prefs = reactive([
 </script>
 
 <style>
+
+.page-wraper {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+
 /* Root container uses a dark gradient to match MapView’s vibe */
 .profile {
   padding: 1rem;

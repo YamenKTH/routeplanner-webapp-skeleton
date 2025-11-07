@@ -3338,13 +3338,18 @@ html, body, #app {
   width: 100%;
   height: 100dvh;
   overflow: hidden;
+  border-radius: px;
 }
 
 #map {
+  position: absolute;
   width: 100%;
   height: 100%;
   z-index: 1;
+  
 }
+
+
 
 /* Navigation Banner (Google Maps style) */
 .nav-banner {

@@ -27,5 +27,6 @@ import PhoneApp from './PhoneApp.vue'
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-radius: 33px;
 }
 </style>
