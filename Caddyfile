@@ -1,4 +1,4 @@
-minutetoure.duckdns.org, minutetour.se, www.minutetour.se{
+minutetoure.duckdns.org, minutetour.se, www.minutetour.se {
     encode gzip
 
     # Strip /api and proxy to backend
