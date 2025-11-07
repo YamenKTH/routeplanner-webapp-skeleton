@@ -1,54 +1,58 @@
 <template>
   <div id="map-container">
     <!-- Search (planning + confirm only) -->
-    <div
-      v-if="isRoutePlanningMode"
-      class="poi-search"
-      @pointerdown.stop
-      @click.stop
-      @keydown.stop
-    >
-      <input
-        class="poi-search-input"
-        type="search"
-        inputmode="search"
-        enterkeyhint="search"
-        autocapitalize="off"
-        autocorrect="off"
-        autocomplete="off"
-        v-model="searchQuery"
-        placeholder="Search loaded POIs…"
-        @focus="showSuggestions = true"
-        @blur="onSearchBlur"
-        @input="showSuggestions = true; highlightedIdx = -1"
-        @keydown="onSearchKeydown"
-      />
+<div
+  v-if="isRoutePlanningMode"
+  class="poi-search"
+  @pointerdown.stop
+  @click.stop
+  @keydown.stop
+>
 
-      <ul
-        v-show="showSuggestions && searchQuery && suggestions.length"
-        class="poi-suggestions"
-        role="listbox"
-        :aria-hidden="!(showSuggestions && searchQuery && suggestions.length)"
-      >
-        <!-- Clicking suggestion should not blur input before handler runs -->
-        <!-- (mousedown prevents blur on desktop; touch works via pointerdown.stop on container) -->
-        <li
-          v-for="(s, i) in suggestions"
-          :key="poiKey(s) + '|' + i"
-          :class="['poi-suggestion', { highlighted: i === highlightedIdx }]"
-          role="option"
-          @pointerdown.prevent.stop="onSuggestionPick(s)"
-          @mouseenter="highlightedIdx = i"
-        >
-          <div class="poi-suggestion-name">{{ s.name || 'Place' }}</div>
-          <div class="poi-suggestion-meta">
-            <span v-if="Array.isArray(s.kinds) && s.kinds.length">{{ s.kinds.slice(0,3).join(', ') }}</span>
-            <span class="sep" v-if="Array.isArray(s.kinds) && s.kinds.length">•</span>
-            <span>{{ s.lat.toFixed(4) }}, {{ s.lon.toFixed(4) }}</span>
-          </div>
-        </li>
-      </ul>
-    </div>
+  <!-- Added wrapper for styling -->
+  <div class="search-box">
+    <input
+      class="poi-search-input"
+      type="search"
+      inputmode="search"
+      enterkeyhint="search"
+      autocapitalize="off"
+      autocorrect="off"
+      autocomplete="off"
+      v-model="searchQuery"
+      placeholder="Search loaded POIs…"
+      @focus="showSuggestions = true"
+      @blur="onSearchBlur"
+      @input="showSuggestions = true; highlightedIdx = -1"
+      @keydown="onSearchKeydown"
+    />
+  </div>
+
+  <ul
+    v-show="showSuggestions && searchQuery && suggestions.length"
+    class="poi-suggestions"
+    role="listbox"
+    :aria-hidden="!(showSuggestions && searchQuery && suggestions.length)"
+  >
+    <!-- Clicking suggestion should not blur input before handler runs -->
+    <!-- (mousedown prevents blur on desktop; touch works via pointerdown.stop on container) -->
+    <li
+      v-for="(s, i) in suggestions"
+      :key="poiKey(s) + '|' + i"
+      :class="['poi-suggestion', { highlighted: i === highlightedIdx }]"
+      role="option"
+      @pointerdown.prevent.stop="onSuggestionPick(s)"
+      @mouseenter="highlightedIdx = i"
+    >
+      <div class="poi-suggestion-name">{{ s.name || 'Place' }}</div>
+      <div class="poi-suggestion-meta">
+        <span v-if="Array.isArray(s.kinds) && s.kinds.length">{{ s.kinds.slice(0,3).join(', ') }}</span>
+        <span class="sep" v-if="Array.isArray(s.kinds) && s.kinds.length">•</span>
+        <span>{{ s.lat.toFixed(4) }}, {{ s.lon.toFixed(4) }}</span>
+      </div>
+    </li>
+  </ul>
+</div>
 
     <div id="map"></div>
 
@@ -467,7 +471,7 @@
               <div class="time-card time-compact cardish compact">
                 <div class="time-header">
                   <span class="time-title-compact">Select <strong>End Time:</strong></span>
-                  <input type="time" class="time-time large" v-model="endTimeStr" step="300" />
+                  <input type="time" class="time-time " v-model="endTimeStr" step="300" />
                 </div>
 
                 <div class="time-subline">
@@ -481,15 +485,15 @@
 
             <!-- Trip mode -->
             <div class="row-two compact radio-group">
-              <label class="chk-pill small">
+              <label class="as-chk-pill2 small">
                 <input type="radio" name="tripMode" value="round" v-model="tripMode" />
                 <img src="/src/icons/roundTripIcon.jpg" alt="Round Trip" class="option-icon" />
-                <span>Round Trip</span>
+                <span class="button-text-2" >Round Trip</span>
               </label>
-              <label class="chk-pill small">
+              <label class="as-chk-pill2 small">
                 <input type="radio" name="tripMode" value="end" v-model="tripMode" />
                 <img src="/src/icons/endPositionsIcon.png" alt="End Position" class="option-icon" />
-                <span>End Position</span>
+                <span class="button-text-2">End Position</span>
               </label>
             </div>
 
@@ -502,7 +506,7 @@
           <!-- ADVANCED -->
           <transition name="fade">
             <div v-if="sheetState==='expanded'" class="advanced-box">
-              <h4>Customize more</h4>
+              <h4 class="button-text" >Customize more</h4>
               <!-- Radius -->
               <div class="panel-section compact">
                 <label class="label">Radius</label>
@@ -556,6 +560,8 @@ import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { useScorer } from "../composables/useScorer.js";
+import flatpickr from "flatpickr"
+import "flatpickr/dist/themes/material_blue.css" // or your own theme
 
 const { catWeights } = useScorer();
 const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || "/api" });
@@ -2701,6 +2707,14 @@ async function generateRoute() {
 
 /* ---------------- map setup ---------------- */
 onMounted(() => {
+
+  flatpickr(".time-time", {
+    enableTime: true,
+    noCalendar: true,
+    dateFormat: "H:i",
+    time_24hr: true
+  })
+
   const el = document.getElementById("map");
   if (el) el.style.height = "100%";
 
@@ -2762,6 +2776,8 @@ onMounted(() => {
   // Try to use browser geolocation on load
   useMyLocation();
 });
+
+
 
 onBeforeUnmount(() => {
   window.removeEventListener("pointermove", onPointerMove);
@@ -4132,17 +4148,67 @@ html, body, #app {
   align-items: center;
   gap: 6px;
   justify-content: center;
-  background: linear-gradient(90deg,#eef 0%,#f6f0ff 100%);
-  color: #4b3d8f;
+
+  
   border-radius: 10px;
   padding: 8px 6px;
+
   font-weight: 700;
   font-size: 0.9rem;
-  border: none;
+  color: #fcfcfcfd;
+
+  /* semi-transparent background instead of opacity */
+  background-color: rgba(4, 0, 8, 0.022);  /* same purple, 15% opacity */
+
+  /* optional: subtle blur / glass effect */
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+
+  transition: background-color 0.25s ease;
+}
+.as-chk-pill2.small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+
+  
+  border-radius: 10px;
+  padding: 8px 6px;
+
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #fcfcfcfd;
+
+  /* semi-transparent background instead of opacity */
+  background-color: rgba(4, 0, 8, 0.022);  /* same purple, 15% opacity */
+
+  /* optional: subtle blur / glass effect */
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+
+  transition: background-color 0.25s ease;
 }
 
-.chk-pill.small input[type="radio"] {
-  accent-color: #6a5cff;
+
+
+
+.as-chk-pill2.small:hover {  background-color: rgb(255, 254, 255);
+
+}
+
+.chk-pill.small:hover {  background-color: rgb(255, 254, 255);
+
+}
+
+
+.as-chk-pill2.small:hover .button-text-2 {
+  color: #000000fc;
+}
+
+
+.as-chk-pill2.small input[type="radio"] {
+  accent-color: #cd02ecfa;
   transform: scale(1.2);
 }
 
@@ -4157,8 +4223,14 @@ html, body, #app {
   cursor: pointer;
 }
 
-.as-button.full {
+.as-button.full{
   width: 100%;
+  color: #eef4ff;
+}
+
+.as-button.full:hover , .button-text:hover{
+  width: 100%;
+  color: #000000fc;
 }
 
 /* Generate button */
@@ -4711,6 +4783,7 @@ html, body, #app {
   border-radius: 8px;
   border: none;
   margin: 0;
+  
 }
 
 /* Tight summary line */
@@ -5298,7 +5371,6 @@ html, body, #app {
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, transform .06s ease;
 }
 
 .poi-open:hover {
@@ -5312,28 +5384,85 @@ html, body, #app {
 /* --- Search UI --- quite good now*/
 *, *::before, *::after { box-sizing: border-box; }
 
-/* Replace your .poi-search block with this */
+/* Wrapper stays fully opaque */
 .poi-search {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 14px); /* a little lower = more breathing room */
-  inset-inline: 8%;              /* smaller inset makes it visually wider */
-  max-inline-size: 720px;        /* allow a bit more width on large screens */
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  inset-inline: 8%;
+  max-inline-size: 720px;
   margin-inline: auto;
+  margin-left: 10%;
   z-index: 1100;
   pointer-events: auto;
+  
 }
 
-/* input slightly chunkier */
-.poi-search-input {
-  width: 100%;
-  padding: 9px 14px;   /* ↓ reduce vertical padding (was 14px) */
-  font-size: 16px;     /* slightly smaller text */
-  border-radius: 10px; /* tighten the curve to match the slimmer height */
+/* The visible bar */
+.poi-search .search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 14px;
+
+  /* translucent fill instead of opacity */
+  background: rgba(255, 255, 255, 0.75);      /* light theme */
+  /* or: background: hsla(0, 0%, 100%, 0.75); */
+
+  /* crisp border that stays visible */
+  border: 1px solid rgba(0, 0, 0, 0.15);
+
+  /* subtle elevation */
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+
+  /* optional glass effect */
+  backdrop-filter: saturate(260%) blur(0px);
+  -webkit-backdrop-filter: saturate(260%) blur(0px);
+}
+
+/* Input stays readable */
+.poi-search input[type="search"],
+.poi-search input[type="text"] {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;   /* so the translucent box shows through */
+  color: #000000;               /* solid text */
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.poi-search input::placeholder {
+  color: rgba(0, 0, 0, 0.717); /* softer placeholder */
+}
+
+/* Optional icon button inside the bar */
+.poi-search .icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(255,255,255,0.6);
+}
+
+/* Dark map variant (if you have a dark mode class on <body> or container) */
+.dark .poi-search .search-box {
+  background: rgba(20, 20, 20, 0.6);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.dark .poi-search input {
+  color: #f3f3f3;
+}
+.dark .poi-search input::placeholder {
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .poi-suggestions {
   margin: 6px 0 0;
-  padding: 6px 0;
+  padding: 10px 14px;
   list-style: none;
   background: #fff;
   border: 1px solid #e6e9ef;
@@ -5343,15 +5472,19 @@ html, body, #app {
   box-shadow: 0 10px 24px rgba(10,20,40,.08);
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
+  cursor: pointer;
+  /* optional glass effect */
+  backdrop-filter: saturate(160%) blur(6px);
+  -webkit-backdrop-filter: saturate(160%) blur(0px);
+
 }
 
-.poi-suggestion {
-  padding: 10px 14px;
-  cursor: pointer;
-}
+
 
 .poi-suggestion.highlighted {
-  background: #f4f6fb;
+  background: #e79fff3b;
+  backdrop-filter: saturate(160%) blur(6px);
+  -webkit-backdrop-filter: saturate(160%) blur(0px);
 }
 
 .poi-suggestion-name {
@@ -5431,4 +5564,22 @@ html, body, #app {
   row-gap: 0 !important;           /* no extra vertical flex gap */
   column-gap: 8px;                 /* keep horizontal spacing */
 }
+
+.flatpickr-input
+
+{
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: #f5f5f5;
+  font-size: 1rem;
+  font-weight: 600;
+  width: auto;
+  min-width: 80px;
+  text-align: center;
+  cursor: pointer;
+}
+
+
 </style>

@@ -12,8 +12,8 @@ import ExploreView from './views/ExploreView.vue'
 import ProfileView from './views/ProfileView.vue'
 
 const routes = [
-  { path: '/', redirect: '/what-is-x' },
-  { path: '/what-is-x', component: HomeView },
+  { path: '/', redirect: '/what-is-minutetour' },
+  { path: '/what-is-minutetour', component: HomeView },
   { path: '/vision', component: PriceView },
   { path: '/about-us', component: AboutView },
   {

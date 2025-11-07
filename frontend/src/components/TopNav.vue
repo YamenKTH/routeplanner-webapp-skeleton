@@ -1,11 +1,11 @@
 <template>
   <nav class="topnav">
     <div class="nav-container">
-      <router-link to="/what-is-x" class="nav-logo" active-class="active">
+      <router-link to="/what-is-minutetour" class="nav-logo" active-class="active">
         <span class="logo-text">MinuteTour</span>
       </router-link>
       <div class="nav-links">
-        <router-link to="/what-is-x" active-class="active">Home</router-link>
+        <router-link to="/what-is-minutetour" active-class="active">Home</router-link>
         <router-link to="/vision" active-class="active">Pricing</router-link>
         <router-link to="/about-us" active-class="active">About</router-link>
         <router-link to="/app-demo" active-class="active" class="nav-demo">Try Demo</router-link>

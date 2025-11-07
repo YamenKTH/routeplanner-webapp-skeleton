@@ -35,7 +35,7 @@ services:
     image: osrm/osrm-backend
     command: osrm-routed --algorithm mld /data/sweden-latest.osrm
     ports:
-      - "5000:5000"
+      - "5500:5000"
     volumes:
       - ./backend/osrm-data:/data
     networks:
